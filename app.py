@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt, Signal, Slot
 
 from db.db_client import db_client
 from db.models import URLParser
+from parser_designer import ParserDesignerWindow
 
 class URLParserTableModel(QtCore.QAbstractTableModel):
     """Model for displaying URL parsers in a table view."""
@@ -318,39 +319,44 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Please enter a URL to parse")
             return
             
-        # TODO: Implement URL parsing logic
-        self.statusBar().showMessage(f"Parsing URL: {url}")
+        # Find a matching parser for the URL
+        import re
+        for parser in self.model.parsers:
+            if re.search(parser.url_pattern, url):
+                self.statusBar().showMessage(f"Found matching parser: {parser.name}")
+                
+                # Open the parser designer for this parser
+                designer = ParserDesignerWindow(self, parser.id)
+                designer.exec()
+                return
+        
+        # No matching parser found
+        self.statusBar().showMessage(f"No matching parser found for URL: {url}")
+        
+        # Ask if user wants to create a new parser
+        reply = QtWidgets.QMessageBox.question(
+            self, "Create New Parser?",
+            "No matching parser found. Would you like to create a new one?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+        )
+        
+        if reply == QtWidgets.QMessageBox.Yes:
+            designer = ParserDesignerWindow(self)
+            designer.exec()
     
     def create_parser(self):
         """Open dialog to create a new parser."""
-        dialog = ParserDialog(self)
-        if dialog.exec():
-            data = dialog.get_parser_data()
-            if data:
-                try:
-                    new_parser = URLParser(**data)
-                    db_client.create(new_parser)
-                    self.model.refresh_data()
-                    self.statusBar().showMessage(f"Created parser: {data['name']}")
-                except Exception as e:
-                    QtWidgets.QMessageBox.critical(
-                        self, "Error", f"Failed to create parser: {str(e)}"
-                    )
+        designer = ParserDesignerWindow(self)
+        if designer.exec():
+            # Refresh the model to show the new parser
+            self.model.refresh_data()
     
     def edit_parser(self, parser_id):
         """Open dialog to edit an existing parser."""
-        dialog = ParserDialog(self, parser_id)
-        if dialog.exec():
-            data = dialog.get_parser_data()
-            if data:
-                try:
-                    db_client.update(URLParser, parser_id, **data)
-                    self.model.refresh_data()
-                    self.statusBar().showMessage(f"Updated parser: {data['name']}")
-                except Exception as e:
-                    QtWidgets.QMessageBox.critical(
-                        self, "Error", f"Failed to update parser: {str(e)}"
-                    )
+        designer = ParserDesignerWindow(self, parser_id)
+        if designer.exec():
+            # Refresh the model to show the updated parser
+            self.model.refresh_data()
     
     def delete_parser(self, parser_id):
         """Delete a parser after confirmation."""
