@@ -266,6 +266,16 @@ class MainWindow(QtWidgets.QMainWindow):
         
         layout.addLayout(top_bar)
         
+        # Create a scroll area for the table view
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Container widget for the table
+        table_container = QtWidgets.QWidget()
+        table_layout = QtWidgets.QVBoxLayout(table_container)
+        
         # Table view for URL parsers
         self.table_view = QtWidgets.QTableView()
         self.table_view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
@@ -289,7 +299,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table_view.setColumnWidth(2, 300)  # URL Pattern
         self.table_view.setColumnWidth(3, 200)  # Parser
         
-        layout.addWidget(self.table_view)
+        # Add table to the container layout
+        table_layout.addWidget(self.table_view)
+        
+        # Set the container as the scroll area widget
+        scroll_area.setWidget(table_container)
+        
+        # Add scroll area to the main layout
+        layout.addWidget(scroll_area)
         
         # Status bar
         self.statusBar().showMessage("Ready")

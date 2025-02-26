@@ -2,11 +2,12 @@
 """
 Script to populate the database with sample URL parser records.
 
-This script adds 10 sample URL parser records to the database for testing and development.
+This script deletes all existing URL parser records and adds 40 sample records for testing and development.
 """
 
 import sys
 import json
+import random
 from pathlib import Path
 
 # Add the parent directory to the Python path
@@ -14,14 +15,28 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from db.models import URLParser
 from db.db_client import db_client
-from db.db_operations import get_url_parser_by_name
+from sqlalchemy import delete
 
-def populate_url_parsers():
-    """Add sample URL parser records to the database."""
-    print("Adding sample URL parser records...")
+def clear_url_parsers():
+    """Delete all URL parser records from the database."""
+    print("Deleting all existing URL parser records...")
     
-    # Sample URL parsers
-    sample_parsers = [
+    with db_client.session_scope() as session:
+        # Delete all records from url_parser table
+        delete_stmt = delete(URLParser)
+        result = session.execute(delete_stmt)
+        print(f"Deleted {result.rowcount} URL parser records.")
+
+def populate_url_parsers(count=40):
+    """Add sample URL parser records to the database.
+    
+    Args:
+        count: Number of sample records to create
+    """
+    print(f"Adding {count} sample URL parser records...")
+    
+    # Base sample URL parsers
+    base_parsers = [
         {
             "name": "GitHub Repository",
             "url_pattern": r"https://github\.com/([^/]+)/([^/]+)/?$",
@@ -172,15 +187,71 @@ def populate_url_parsers():
         }
     ]
     
-    # Add each parser if it doesn't already exist
+    # Additional site types to generate more variety
+    additional_sites = [
+        {"name": "LinkedIn Post", "domain": "linkedin.com", "type": "post"},
+        {"name": "Facebook Post", "domain": "facebook.com", "type": "post"},
+        {"name": "Instagram Post", "domain": "instagram.com", "type": "post"},
+        {"name": "TikTok Video", "domain": "tiktok.com", "type": "video"},
+        {"name": "Substack Article", "domain": "substack.com", "type": "article"},
+        {"name": "Dev.to Article", "domain": "dev.to", "type": "article"},
+        {"name": "Hashnode Article", "domain": "hashnode.com", "type": "article"},
+        {"name": "Product Hunt Product", "domain": "producthunt.com", "type": "product"},
+        {"name": "Kaggle Dataset", "domain": "kaggle.com", "type": "dataset"},
+        {"name": "Hugging Face Model", "domain": "huggingface.co", "type": "model"},
+        {"name": "NPM Package", "domain": "npmjs.com", "type": "package"},
+        {"name": "PyPI Package", "domain": "pypi.org", "type": "package"},
+        {"name": "Coursera Course", "domain": "coursera.org", "type": "course"},
+        {"name": "Udemy Course", "domain": "udemy.com", "type": "course"},
+        {"name": "edX Course", "domain": "edx.org", "type": "course"}
+    ]
+    
+    # Generate sample parsers
+    sample_parsers = []
+    
+    # First add the base parsers
+    sample_parsers.extend(base_parsers)
+    
+    # Then generate additional parsers to reach the desired count
+    while len(sample_parsers) < count:
+        # Pick a random site from additional sites
+        site = random.choice(additional_sites)
+        
+        # Create a unique variant name
+        variant = f" Variant {random.randint(1, 10000)}"
+        name = f"{site['name']}{variant}"
+        
+        # Ensure the name is unique
+        while any(p["name"] == name for p in sample_parsers):
+            variant = f" Variant {random.randint(1, 10000)}"
+            name = f"{site['name']}{variant}"
+        
+        parser_data = {
+            "name": name,
+            "url_pattern": f"https://(?:www\\.)?{site['domain']}/.*",
+            "parser": f"{site['domain'].split('.')[0]}_{site['type']}_parser",
+            "meta_data": {
+                "site": site["domain"],
+                "type": site["type"],
+                "extract_content": True,
+                "extract_metadata": random.choice([True, False]),
+                "priority": random.randint(1, 5)
+            },
+            "chat_data": {
+                "system_prompt": f"You are analyzing a {site['name']}.",
+                "user_prompt_template": f"Please analyze this {site['name']}: {{url}}",
+                "temperature": round(random.uniform(0.1, 0.9), 1)
+            }
+        }
+        
+        sample_parsers.append(parser_data)
+    
+    # Ensure we only have the requested number of parsers
+    sample_parsers = sample_parsers[:count]
+    
+    # Add each parser
     added_count = 0
     for parser_data in sample_parsers:
-        # Check if parser already exists
-        existing_parser = get_url_parser_by_name(parser_data["name"])
-        if existing_parser:
-            print(f"  - {parser_data['name']} already exists, skipping...")
-            continue
-        
         # Create new parser
         new_parser = URLParser(
             name=parser_data["name"],
@@ -205,14 +276,22 @@ def main():
     print("DATABASE POPULATION SCRIPT")
     print("=" * 80)
     
+    # Clear existing URL parsers
+    clear_url_parsers()
+    
     # Populate URL parsers
-    populate_url_parsers()
+    populate_url_parsers(40)
     
     # Get all parsers to verify
     parsers = db_client.get_all(URLParser)
     print(f"\nTotal URL parsers in database: {len(parsers)}")
-    for parser in parsers:
+    
+    # Print first 5 parsers
+    print("First 5 parsers:")
+    for parser in parsers[:5]:
         print(f"  - {parser.id}: {parser.name} ({parser.parser})")
+    
+    print("..." if len(parsers) > 5 else "")
     
     print("=" * 80)
     print("Database population complete.")
