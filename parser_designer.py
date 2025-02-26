@@ -33,8 +33,33 @@ logger = logging.getLogger(__name__)
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key or api_key == "your_openai_api_key_here":
     logger.warning("OpenAI API key not found or not set. Chat functionality will not work.")
+    print("Error: OPENAI_API_KEY not found or not properly set in environment variables.")
+    openai_client = None
+else:
+    print(f"Using API key: {api_key[:8]}...{api_key[-4:] if api_key and len(api_key) > 12 else ''}")
 
-openai_client = openai.OpenAI(api_key=api_key)
+    # Initialize the OpenAI client
+    try:
+        print("Initializing OpenAI client...")
+        openai_client = openai.OpenAI(api_key=api_key)
+        
+        # Test the client with a simple request to verify it works
+        # We'll only do this when the module is run directly, not when imported
+        if __name__ == "__main__":
+            print("Testing OpenAI API connection...")
+            test_response = openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "system", "content": "Test connection"}],
+                max_tokens=5
+            )
+            print(f"OpenAI API connection successful! Response: {test_response.choices[0].message.content}")
+        
+        logger.info("OpenAI API connection successful")
+    except Exception as e:
+        logger.error(f"Error initializing OpenAI client: {str(e)}")
+        print(f"Error initializing OpenAI client: {str(e)}")
+        # Create a dummy client that will be replaced with proper error handling
+        openai_client = None
 
 
 class ChatMessage:
@@ -431,6 +456,10 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             # Show a loading indicator
             self.chat_widget.chat_display.append('<div style="color: #999999; font-style: italic;">Assistant is typing...</div>')
             
+            # Check if OpenAI client is properly initialized
+            if openai_client is None:
+                raise Exception("OpenAI client is not properly initialized. Please check your API key.")
+            
             # Prepare messages for API call
             messages = self.chat_widget.history.get_openai_messages()
             
@@ -457,7 +486,20 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             
         except Exception as e:
             logger.error(f"Error calling OpenAI API: {str(e)}")
-            self.chat_widget.receive_message(f"Sorry, I encountered an error: {str(e)}")
+            
+            # Remove the "typing" indicator
+            cursor = self.chat_widget.chat_display.textCursor()
+            cursor.movePosition(QtGui.QTextCursor.End)
+            cursor.select(QtGui.QTextCursor.LineUnderCursor)
+            cursor.removeSelectedText()
+            cursor.deletePreviousChar()  # Remove the newline
+            
+            # Display a more helpful error message
+            error_message = str(e)
+            if "authentication" in error_message.lower() or "api key" in error_message.lower():
+                self.chat_widget.receive_message("Error: There seems to be an issue with your OpenAI API key. Please check that it's correctly set in your .env file.")
+            else:
+                self.chat_widget.receive_message(f"Sorry, I encountered an error: {error_message}")
     
     def open_browser(self):
         """Open a browser for testing the parser."""
