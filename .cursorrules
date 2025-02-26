@@ -1,0 +1,121 @@
+# LLM Spider Cursor Rules
+# This file defines rules for the Cursor IDE to help with code navigation and organization
+
+# Define file groups for easier navigation
+[groups]
+# Core application files
+core = [
+  "app.py",
+  "parser_designer.py"
+]
+
+# Database related files
+database = [
+  "db/models.py",
+  "db/db_client.py",
+  "db/db_operations.py",
+  "db/init_db.py",
+  "alembic.ini",
+  "migrations/**/*"
+]
+
+# Utility files
+utils = [
+  "utils/**/*"
+]
+
+# Test and playground files
+tests = [
+  "playground/**/*"
+]
+
+# Configuration files
+config = [
+  ".env",
+  "requirements.txt",
+  ".gitignore",
+  "README.md"
+]
+
+# Define file associations for syntax highlighting
+[associations]
+"*.py" = "python"
+"*.ini" = "ini"
+"*.md" = "markdown"
+"*.json" = "json"
+"*.sql" = "sql"
+
+# Define custom commands
+[commands]
+# Run the main application
+run_app = "python app.py"
+# Run the parser designer directly
+run_designer = "python parser_designer.py"
+# Run database tests
+test_db = "python playground/test_db.py"
+# Initialize the database
+init_db = "python db/init_db.py"
+# Run database migrations
+migrate = "alembic upgrade head"
+
+# Define search paths for imports
+[search]
+pythonPath = [
+  ".",
+  ".venv/lib/python3.8/site-packages"
+]
+
+# Define code formatting rules
+[format]
+indentSize = 4
+useTabs = false
+trimTrailingWhitespace = true
+insertFinalNewline = true
+
+# Define linting rules
+[lint]
+pylint = true
+flake8 = true
+mypy = true
+
+# Define custom snippets
+[snippets]
+# Create a new URL parser
+new_parser = """
+from db.db_client import db_client
+from db.models import URLParser
+
+new_parser = URLParser(
+    name="${1:Parser Name}",
+    url_pattern=r"${2:URL Pattern}",
+    parser="${3:parser_function}",
+    meta_data={
+        "${4:key}": "${5:value}"
+    },
+    chat_data={
+        "system_prompt": "${6:System prompt}",
+        "user_prompt_template": "${7:User prompt template}"
+    }
+)
+
+created_parser = db_client.create(new_parser)
+"""
+
+# Create a new PySide6 widget
+new_widget = """
+from PySide6 import QtWidgets, QtCore, QtGui
+from PySide6.QtCore import Qt, Signal, Slot
+
+class ${1:WidgetName}(QtWidgets.QWidget):
+    \"\"\"${2:Widget description}\"\"\"
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+    
+    def setup_ui(self):
+        \"\"\"Set up the UI components.\"\"\"
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        ${0:# Add UI components here}
+""" 
