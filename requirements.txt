@@ -1,0 +1,23 @@
+# Core UI dependencies
+PySide6>=6.5.0
+qt-material>=2.14
+
+# LLM integration
+litellm>=1.10.0
+openai>=1.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+requests>=2.31.0
+typing-extensions>=4.7.0
+pydantic>=2.4.0
+
+# Optional: for local model support
+ollama>=0.1.5 
+
+# Development tools
+jupyterlab>=4.0.0 
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.12.0 
