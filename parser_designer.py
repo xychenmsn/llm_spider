@@ -11,7 +11,9 @@ import os
 import sys
 import json
 import logging
-from typing import List, Dict, Optional, Any
+import re
+import base64
+from typing import List, Dict, Optional, Any, Union
 from datetime import datetime
 
 from PySide6 import QtWidgets, QtCore, QtGui
@@ -22,6 +24,11 @@ from dotenv import load_dotenv
 import openai
 from db.models import URLParser
 from db.db_client import db_client
+
+# For web scraping
+import requests
+from playwright.sync_api import sync_playwright
+from bs4 import BeautifulSoup
 
 # Load environment variables
 load_dotenv()
@@ -61,6 +68,198 @@ else:
         # Create a dummy client that will be replaced with proper error handling
         openai_client = None
 
+# Define function schemas for LLM function calling
+FUNCTION_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_webpage",
+            "description": "Fetch the HTML content and screenshot of a webpage",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL of the webpage to fetch"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_list_parser",
+            "description": "Create a parser for a list page that extracts URLs",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector to find list items"
+                    },
+                    "attribute": {
+                        "type": "string",
+                        "description": "Attribute to extract from elements (usually 'href')"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of how the parser works"
+                    }
+                },
+                "required": ["selector", "attribute", "description"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_content_parser",
+            "description": "Create a parser for a content page that extracts title, date, and body",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title_selector": {
+                        "type": "string",
+                        "description": "CSS selector to find the title"
+                    },
+                    "date_selector": {
+                        "type": "string",
+                        "description": "CSS selector to find the date"
+                    },
+                    "body_selector": {
+                        "type": "string",
+                        "description": "CSS selector to find the body content"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Description of how the parser works"
+                    }
+                },
+                "required": ["title_selector", "date_selector", "body_selector", "description"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "parse_with_parser",
+            "description": "Parse a webpage using the created parser",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to parse"
+                    },
+                    "parser_type": {
+                        "type": "string",
+                        "description": "Type of parser: 'list' or 'content'"
+                    }
+                },
+                "required": ["url", "parser_type"]
+            }
+        }
+    }
+]
+
+# Helper functions for web scraping
+def fetch_webpage_html(url: str) -> str:
+    """Fetch the HTML content of a webpage using requests."""
+    try:
+        response = requests.get(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        response.raise_for_status()
+        return response.text
+    except Exception as e:
+        logger.error(f"Error fetching HTML: {str(e)}")
+        return f"Error fetching HTML: {str(e)}"
+
+def take_webpage_screenshot(url: str, timeout: int = 15000) -> Optional[str]:
+    """Take a screenshot of a webpage using Playwright and return as base64."""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            
+            # Set a shorter timeout
+            page.goto(url, timeout=timeout)
+            
+            # Wait for the page to load, but with a timeout
+            try:
+                page.wait_for_load_state("networkidle", timeout=timeout)
+            except Exception as e:
+                logger.warning(f"Timeout waiting for page to load: {str(e)}")
+                # Continue anyway, we'll take a screenshot of what we have
+            
+            # Take a screenshot of the full page
+            screenshot_bytes = page.screenshot(full_page=True, type='jpeg', quality=50)
+            browser.close()
+            
+            # Convert to base64
+            return base64.b64encode(screenshot_bytes).decode('utf-8')
+    except Exception as e:
+        logger.error(f"Error taking screenshot: {str(e)}")
+        return None
+
+def parse_list_page(html: str, selector: str, attribute: str) -> List[str]:
+    """Parse a list page to extract URLs."""
+    try:
+        if not selector:
+            return ["Error: No selector provided"]
+            
+        soup = BeautifulSoup(html, 'html.parser')
+        elements = soup.select(selector)
+        urls = []
+        
+        for element in elements:
+            if attribute == 'href' and element.name == 'a':
+                url = element.get('href')
+                if url:
+                    urls.append(url)
+            elif attribute == 'text':
+                urls.append(element.text.strip())
+            else:
+                attr_value = element.get(attribute)
+                if attr_value:
+                    urls.append(attr_value)
+        
+        return urls
+    except Exception as e:
+        logger.error(f"Error parsing list page: {str(e)}")
+        return [f"Error parsing list page: {str(e)}"]
+
+def parse_content_page(html: str, title_selector: str, date_selector: str, body_selector: str) -> Dict[str, str]:
+    """Parse a content page to extract title, date, and body."""
+    try:
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        title = ""
+        date = ""
+        body = ""
+        
+        if title_selector:
+            title_element = soup.select_one(title_selector)
+            title = title_element.text.strip() if title_element else ""
+        
+        if date_selector:
+            date_element = soup.select_one(date_selector)
+            date = date_element.text.strip() if date_element else ""
+        
+        if body_selector:
+            body_element = soup.select_one(body_selector)
+            body = body_element.text.strip() if body_element else ""
+        
+        return {
+            "title": title,
+            "date": date,
+            "body": body
+        }
+    except Exception as e:
+        logger.error(f"Error parsing content page: {str(e)}")
+        return {"title": "", "date": "", "body": f"Error: {str(e)}"}
 
 class ChatMessage:
     """Represents a message in the chat."""
@@ -329,11 +528,19 @@ class ChatWidget(QtWidgets.QWidget):
 class ParserDesignerWindow(QtWidgets.QDialog):
     """Dialog for designing URL parsers with LLM assistance."""
     
-    def __init__(self, parent=None, parser_id=None):
+    def __init__(self, parent=None, parser_id=None, url=None):
         super().__init__(parent)
         self.parser_id = parser_id
         self.parser = None
         self.chat_history = ChatHistory()
+        self.url = url
+        
+        # Parser data
+        self.html_content = None
+        self.screenshot_data = None
+        self.parser_type = None  # 'list' or 'content'
+        self.parser_config = {}
+        self.parsed_results = None
         
         # Load parser if editing
         if parser_id:
@@ -365,15 +572,18 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         """Set up the UI components."""
         layout = QtWidgets.QVBoxLayout(self)
         
-        # Header with parser name
+        # Header with parser name input
         header_layout = QtWidgets.QHBoxLayout()
         
-        self.name_label = QtWidgets.QLabel("New Parser")
-        font = self.name_label.font()
-        font.setPointSize(16)
-        font.setBold(True)
-        self.name_label.setFont(font)
-        header_layout.addWidget(self.name_label)
+        # Name input field
+        name_layout = QtWidgets.QHBoxLayout()
+        name_label = QtWidgets.QLabel("Name:")
+        self.name_input = QtWidgets.QLineEdit()
+        if self.parser:
+            self.name_input.setText(self.parser.name)
+        name_layout.addWidget(name_label)
+        name_layout.addWidget(self.name_input)
+        header_layout.addLayout(name_layout, 2)
         
         header_layout.addStretch()
         
@@ -386,6 +596,16 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         
         # Toolbar with buttons
         toolbar_layout = QtWidgets.QHBoxLayout()
+        
+        # URL input field
+        url_layout = QtWidgets.QHBoxLayout()
+        url_label = QtWidgets.QLabel("URL:")
+        self.url_input = QtWidgets.QLineEdit()
+        if self.url:
+            self.url_input.setText(self.url)
+        url_layout.addWidget(url_label)
+        url_layout.addWidget(self.url_input)
+        toolbar_layout.addLayout(url_layout, 3)
         
         self.browser_button = QtWidgets.QPushButton("Open Browser")
         self.browser_button.clicked.connect(self.open_browser)
@@ -409,8 +629,6 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         
         # Update UI with parser data if editing
         if self.parser:
-            self.name_label.setText(self.parser.name)
-            
             # Load chat history
             for message in self.chat_history.messages:
                 if message.role != ChatMessage.ROLE_SYSTEM:
@@ -425,8 +643,9 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         system_prompt = (
             "You are an AI assistant helping to design a URL parser. "
             "Your goal is to help the user create a parser that can extract relevant information from URLs. "
-            "You can suggest regex patterns, parsing strategies, and help with implementation details. "
-            "Be specific and provide code examples when appropriate."
+            "You can suggest CSS selectors, parsing strategies, and help with implementation details. "
+            "Be specific and provide code examples when appropriate. "
+            "You have access to functions that can fetch webpage content, create parsers, and parse webpages."
         )
         
         if self.parser:
@@ -436,12 +655,27 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         
         self.chat_widget.set_system_prompt(system_prompt)
         
-        # If no existing chat history, send a welcome message
-        if not self.chat_history.messages or all(msg.role == ChatMessage.ROLE_SYSTEM for msg in self.chat_history.messages):
+        # If URL is provided, send an initial message to parse it
+        if self.url and not self.parser:
+            initial_message = (
+                f"Welcome to the Parser Designer! I'll help you create a parser for the URL: {self.url}\n\n"
+                f"Let me analyze this URL and suggest a parser for it."
+            )
+            self.chat_widget.receive_message(initial_message)
+            
+            # Send a message to trigger the parsing process
+            parse_message = f"Try to parse this URL: {self.url}"
+            self.chat_widget.display_message(ChatMessage(ChatMessage.ROLE_USER, parse_message))
+            self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_USER, parse_message))
+            
+            # Get AI response
+            self._get_ai_response()
+        elif not self.chat_history.messages or all(msg.role == ChatMessage.ROLE_SYSTEM for msg in self.chat_history.messages):
+            # If no URL and no existing chat history, send a welcome message
             welcome_message = (
                 "Welcome to the Parser Designer! I'm here to help you create a URL parser. "
                 "Let's start by discussing what kind of URLs you want to parse and what information you want to extract. "
-                "You can ask me questions, request code examples, or get suggestions for regex patterns."
+                "You can ask me questions, request code examples, or get suggestions for CSS selectors."
             )
             self.chat_widget.receive_message(welcome_message)
     
@@ -451,7 +685,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         self._get_ai_response()
     
     def _get_ai_response(self):
-        """Get a response from the OpenAI API."""
+        """Get a response from the OpenAI API with function calling."""
         try:
             # Show a loading indicator
             self.chat_widget.chat_display.append('<div style="color: #999999; font-style: italic;">Assistant is typing...</div>')
@@ -463,23 +697,55 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             # Prepare messages for API call
             messages = self.chat_widget.history.get_openai_messages()
             
-            # Call OpenAI API
+            # Call OpenAI API with function calling
             response = openai_client.chat.completions.create(
-                model="gpt-4",  # Use an appropriate model
+                model="gpt-3.5-turbo",  # Use gpt-3.5-turbo instead of o3-mini
                 messages=messages,
                 temperature=0.7,
-                max_tokens=1000
+                max_tokens=1000,
+                tools=FUNCTION_SCHEMAS
             )
             
-            # Extract response text
-            response_text = response.choices[0].message.content
+            # Extract response
+            response_message = response.choices[0].message
+            
+            # Check if there's a function call
+            if response_message.tool_calls:
+                # Handle function calls
+                for tool_call in response_message.tool_calls:
+                    function_name = tool_call.function.name
+                    function_args = json.loads(tool_call.function.arguments)
+                    
+                    # Add the assistant's function call to the chat history
+                    self.chat_widget.history.add_message(ChatMessage(
+                        ChatMessage.ROLE_ASSISTANT,
+                        response_message.content or "I'll help you with that."
+                    ))
+                    
+                    # Display the assistant's message
+                    if response_message.content:
+                        # Remove the "typing" indicator
+                        self._remove_typing_indicator()
+                        self.chat_widget.receive_message(response_message.content)
+                    
+                    # Execute the function
+                    function_response = self._execute_function(function_name, function_args)
+                    
+                    # Add the function response to the chat history
+                    self.chat_widget.history.add_message(ChatMessage(
+                        ChatMessage.ROLE_SYSTEM,
+                        f"Function {function_name} returned: {json.dumps(function_response)}"
+                    ))
+                    
+                    # Call the API again with the function response
+                    self._get_ai_response()
+                    return
+            
+            # If no function call, just display the response
+            response_text = response_message.content
             
             # Remove the "typing" indicator
-            cursor = self.chat_widget.chat_display.textCursor()
-            cursor.movePosition(QtGui.QTextCursor.End)
-            cursor.select(QtGui.QTextCursor.LineUnderCursor)
-            cursor.removeSelectedText()
-            cursor.deletePreviousChar()  # Remove the newline
+            self._remove_typing_indicator()
             
             # Display the response
             self.chat_widget.receive_message(response_text)
@@ -488,11 +754,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             logger.error(f"Error calling OpenAI API: {str(e)}")
             
             # Remove the "typing" indicator
-            cursor = self.chat_widget.chat_display.textCursor()
-            cursor.movePosition(QtGui.QTextCursor.End)
-            cursor.select(QtGui.QTextCursor.LineUnderCursor)
-            cursor.removeSelectedText()
-            cursor.deletePreviousChar()  # Remove the newline
+            self._remove_typing_indicator()
             
             # Display a more helpful error message
             error_message = str(e)
@@ -500,6 +762,238 @@ class ParserDesignerWindow(QtWidgets.QDialog):
                 self.chat_widget.receive_message("Error: There seems to be an issue with your OpenAI API key. Please check that it's correctly set in your .env file.")
             else:
                 self.chat_widget.receive_message(f"Sorry, I encountered an error: {error_message}")
+    
+    def _remove_typing_indicator(self):
+        """Remove the typing indicator from the chat display."""
+        cursor = self.chat_widget.chat_display.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        cursor.select(QtGui.QTextCursor.LineUnderCursor)
+        cursor.removeSelectedText()
+        cursor.deletePreviousChar()  # Remove the newline
+    
+    def _execute_function(self, function_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a function called by the LLM."""
+        try:
+            if function_name == "fetch_webpage":
+                return self._fetch_webpage(args.get("url", ""))
+            elif function_name == "create_list_parser":
+                return self._create_list_parser(
+                    args.get("selector", ""),
+                    args.get("attribute", "href"),
+                    args.get("description", "")
+                )
+            elif function_name == "create_content_parser":
+                return self._create_content_parser(
+                    args.get("title_selector", ""),
+                    args.get("date_selector", ""),
+                    args.get("body_selector", ""),
+                    args.get("description", "")
+                )
+            elif function_name == "parse_with_parser":
+                return self._parse_with_parser(
+                    args.get("url", ""),
+                    args.get("parser_type", "")
+                )
+            else:
+                return {"error": f"Unknown function: {function_name}"}
+        except Exception as e:
+            logger.error(f"Error executing function {function_name}: {str(e)}")
+            return {"error": str(e)}
+    
+    def _fetch_webpage(self, url: str) -> Dict[str, Any]:
+        """Fetch the HTML content and screenshot of a webpage."""
+        if not url:
+            url = self.url
+        
+        if not url:
+            return {"error": "No URL provided"}
+        
+        # Fetch HTML
+        self.html_content = fetch_webpage_html(url)
+        
+        # Take screenshot
+        self.screenshot_data = take_webpage_screenshot(url)
+        
+        # Display the screenshot in the chat
+        if self.screenshot_data:
+            # Create a QImage from the base64 data
+            image_data = base64.b64decode(self.screenshot_data)
+            image = QImage()
+            image.loadFromData(image_data)
+            
+            # Scale the image to a reasonable size
+            max_width = 600
+            if image.width() > max_width:
+                image = image.scaledToWidth(max_width, Qt.SmoothTransformation)
+            
+            # Convert to QPixmap and display
+            pixmap = QPixmap.fromImage(image)
+            
+            # Add the image to the chat
+            self.chat_widget.chat_display.append('<div style="text-align: center;">')
+            self.chat_widget.chat_display.append('<p style="color: #666666; font-style: italic;">Screenshot:</p>')
+            
+            # Create a label for the image
+            label = QtWidgets.QLabel()
+            label.setPixmap(pixmap)
+            label.setAlignment(Qt.AlignCenter)
+            
+            # Add the label to the chat display
+            self.chat_widget.chat_display.insertHtml(f'<img src="data:image/jpeg;base64,{self.screenshot_data}" style="max-width: {max_width}px; max-height: 400px;" />')
+            self.chat_widget.chat_display.append('</div>')
+        
+        # Return a summary of the HTML content
+        html_preview = self.html_content[:1000] + "..." if len(self.html_content) > 1000 else self.html_content
+        
+        return {
+            "url": url,
+            "html_preview": html_preview,
+            "has_screenshot": self.screenshot_data is not None,
+            "html_length": len(self.html_content)
+        }
+    
+    def _create_list_parser(self, selector: str, attribute: str, description: str) -> Dict[str, Any]:
+        """Create a parser for a list page."""
+        self.parser_type = "list"
+        self.parser_config = {
+            "selector": selector,
+            "attribute": attribute,
+            "description": description
+        }
+        
+        # Update the name input if it's empty
+        if not self.name_input.text():
+            self.name_input.setText(f"List Parser - {self.url}")
+        
+        # Update the URL pattern if it's empty
+        if not self.url_input.text():
+            self.url_input.setText(self.url)
+        
+        return {
+            "parser_type": "list",
+            "config": self.parser_config,
+            "message": "List parser created successfully"
+        }
+    
+    def _create_content_parser(self, title_selector: str, date_selector: str, body_selector: str, description: str) -> Dict[str, Any]:
+        """Create a parser for a content page."""
+        self.parser_type = "content"
+        self.parser_config = {
+            "title_selector": title_selector,
+            "date_selector": date_selector,
+            "body_selector": body_selector,
+            "description": description
+        }
+        
+        # Update the name input if it's empty
+        if not self.name_input.text():
+            self.name_input.setText(f"Content Parser - {self.url}")
+        
+        # Update the URL pattern if it's empty
+        if not self.url_input.text():
+            self.url_input.setText(self.url)
+        
+        return {
+            "parser_type": "content",
+            "config": self.parser_config,
+            "message": "Content parser created successfully"
+        }
+    
+    def _parse_with_parser(self, url: str, parser_type: str) -> Dict[str, Any]:
+        """Parse a webpage using the created parser."""
+        try:
+            if not url:
+                url = self.url
+            
+            if not url:
+                return {"error": "No URL provided"}
+            
+            if not self.html_content:
+                self.html_content = fetch_webpage_html(url)
+            
+            if parser_type == "list" or self.parser_type == "list":
+                # Parse as a list page
+                if not self.parser_config:
+                    return {"error": "No list parser configuration available"}
+                
+                selector = self.parser_config.get("selector", "")
+                attribute = self.parser_config.get("attribute", "href")
+                
+                urls = parse_list_page(self.html_content, selector, attribute)
+                self.parsed_results = urls
+                
+                # Check for errors
+                if urls and isinstance(urls[0], str) and urls[0].startswith("Error:"):
+                    self.chat_widget.chat_display.append(f'<div style="color: red; padding: 10px; border-radius: 5px; margin: 10px 0;">{urls[0]}</div>')
+                    return {"error": urls[0]}
+                
+                # Display the results in the chat
+                self.chat_widget.chat_display.append('<div style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0;">')
+                self.chat_widget.chat_display.append('<p style="font-weight: bold;">Parsed URLs:</p>')
+                self.chat_widget.chat_display.append('<ul>')
+                
+                for url in urls[:10]:  # Show only the first 10 URLs
+                    self.chat_widget.chat_display.append(f'<li>{url}</li>')
+                
+                if len(urls) > 10:
+                    self.chat_widget.chat_display.append(f'<li>... and {len(urls) - 10} more</li>')
+                
+                self.chat_widget.chat_display.append('</ul>')
+                self.chat_widget.chat_display.append('</div>')
+                
+                return {
+                    "parser_type": "list",
+                    "url_count": len(urls),
+                    "urls": urls[:10],  # Return only the first 10 URLs
+                    "has_more": len(urls) > 10
+                }
+            
+            elif parser_type == "content" or self.parser_type == "content":
+                # Parse as a content page
+                if not self.parser_config:
+                    return {"error": "No content parser configuration available"}
+                
+                title_selector = self.parser_config.get("title_selector", "")
+                date_selector = self.parser_config.get("date_selector", "")
+                body_selector = self.parser_config.get("body_selector", "")
+                
+                content = parse_content_page(self.html_content, title_selector, date_selector, body_selector)
+                self.parsed_results = content
+                
+                # Check for errors
+                if content.get("body", "").startswith("Error:"):
+                    self.chat_widget.chat_display.append(f'<div style="color: red; padding: 10px; border-radius: 5px; margin: 10px 0;">{content["body"]}</div>')
+                    return {"error": content["body"]}
+                
+                # Display the results in the chat
+                self.chat_widget.chat_display.append('<div style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0;">')
+                self.chat_widget.chat_display.append('<p style="font-weight: bold;">Parsed Content:</p>')
+                
+                self.chat_widget.chat_display.append(f'<p><strong>Title:</strong> {content["title"]}</p>')
+                self.chat_widget.chat_display.append(f'<p><strong>Date:</strong> {content["date"]}</p>')
+                
+                # Truncate body if it's too long
+                body_preview = content["body"][:500] + "..." if len(content["body"]) > 500 else content["body"]
+                self.chat_widget.chat_display.append(f'<p><strong>Body:</strong> {body_preview}</p>')
+                
+                self.chat_widget.chat_display.append('</div>')
+                
+                return {
+                    "parser_type": "content",
+                    "content": {
+                        "title": content["title"],
+                        "date": content["date"],
+                        "body_preview": body_preview,
+                        "body_length": len(content["body"])
+                    }
+                }
+            
+            else:
+                return {"error": f"Unknown parser type: {parser_type}"}
+        except Exception as e:
+            logger.error(f"Error parsing with parser: {str(e)}")
+            self.chat_widget.chat_display.append(f'<div style="color: red; padding: 10px; border-radius: 5px; margin: 10px 0;">Error parsing with parser: {str(e)}</div>')
+            return {"error": f"Error parsing with parser: {str(e)}"}
     
     def open_browser(self):
         """Open a browser for testing the parser."""
@@ -510,68 +1004,69 @@ class ParserDesignerWindow(QtWidgets.QDialog):
     
     def save_parser(self):
         """Save the parser with the chat history."""
+        name = self.name_input.text().strip()
+        url_pattern = self.url_input.text().strip()
+        
+        if not name or not url_pattern:
+            QtWidgets.QMessageBox.warning(
+                self, "Missing Information", "Please provide a name and URL pattern."
+            )
+            return
+        
+        # Prepare parser data
+        parser_data = {
+            "type": self.parser_type,
+            "config": self.parser_config,
+            "description": self.parser_config.get("description", "")
+        }
+        
+        # Prepare metadata
+        meta_data = {
+            "last_updated": datetime.now().isoformat(),
+            "url": self.url
+        }
+        
         if not self.parser:
-            # If creating a new parser, open a dialog to get the name and URL pattern
-            dialog = NewParserDialog(self)
-            if dialog.exec():
-                name = dialog.name_input.text().strip()
-                url_pattern = dialog.pattern_input.text().strip()
-                parser_type = dialog.parser_input.text().strip() or "custom_parser"
-                
-                if not name or not url_pattern:
-                    QtWidgets.QMessageBox.warning(
-                        self, "Missing Information", "Please provide a name and URL pattern."
-                    )
-                    return
-                
-                # Create a new parser
-                self.parser = URLParser(
-                    name=name,
-                    url_pattern=url_pattern,
-                    parser=parser_type,
-                    meta_data={},
-                    chat_data={"chat_history": self.chat_widget.history.to_dict()}
-                )
-                
-                try:
-                    created_parser = db_client.create(self.parser)
-                    if created_parser:
-                        self.parser = created_parser
-                        self.name_label.setText(self.parser.name)
-                        QtWidgets.QMessageBox.information(
-                            self, "Success", f"Parser '{name}' created successfully."
-                        )
-                        self.accept()  # Close the dialog
-                    else:
-                        QtWidgets.QMessageBox.critical(
-                            self, "Error", "Failed to create parser."
-                        )
-                except Exception as e:
-                    QtWidgets.QMessageBox.critical(
-                        self, "Error", f"Failed to create parser: {str(e)}"
-                    )
+            # Create a new parser
+            parser_type = self.parser_type or "custom_parser"
+            self.parser = URLParser(
+                name=name,
+                url_pattern=url_pattern,
+                parser=json.dumps(parser_data),
+                meta_data=meta_data,
+                chat_data={"chat_history": self.chat_widget.history.to_dict()}
+            )
             
+            try:
+                created_parser = db_client.create(self.parser)
+                if created_parser:
+                    self.parser = created_parser
+                    QtWidgets.QMessageBox.information(
+                        self, "Success", f"Parser '{name}' created successfully."
+                    )
+                    self.accept()  # Close the dialog
+                else:
+                    QtWidgets.QMessageBox.critical(
+                        self, "Error", "Failed to create parser."
+                    )
+            except Exception as e:
+                QtWidgets.QMessageBox.critical(
+                    self, "Error", f"Failed to create parser: {str(e)}"
+                )
         else:
             # Update existing parser
+            self.parser.name = name
+            self.parser.url_pattern = url_pattern
+            self.parser.parser = json.dumps(parser_data)
+            self.parser.meta_data = meta_data
+            self.parser.chat_data = {"chat_history": self.chat_widget.history.to_dict()}
+            
             try:
-                # Update chat history
-                if isinstance(self.parser.chat_data, str):
-                    chat_data = json.loads(self.parser.chat_data)
-                else:
-                    chat_data = self.parser.chat_data or {}
-                
-                chat_data["chat_history"] = self.chat_widget.history.to_dict()
-                
-                # Update parser
-                updated_parser = db_client.update(
-                    URLParser,
-                    self.parser.id,
-                    chat_data=chat_data
-                )
-                
+                updated_parser = db_client.update(self.parser)
                 if updated_parser:
+                    self.parser = updated_parser
                     QtWidgets.QMessageBox.information(
-                        self, "Success", f"Parser '{self.parser.name}' updated successfully."
+                        self, "Success", f"Parser '{name}' updated successfully."
                     )
                     self.accept()  # Close the dialog
                 else:

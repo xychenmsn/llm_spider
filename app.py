@@ -326,7 +326,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.statusBar().showMessage(f"Found matching parser: {parser.name}")
                 
                 # Open the parser designer for this parser
-                designer = ParserDesignerWindow(self, parser.id)
+                designer = ParserDesignerWindow(self, parser.id, url=url)
                 designer.exec()
                 return
         
@@ -341,12 +341,13 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         
         if reply == QtWidgets.QMessageBox.Yes:
-            designer = ParserDesignerWindow(self)
+            designer = ParserDesignerWindow(self, url=url)
             designer.exec()
     
     def create_parser(self):
         """Open dialog to create a new parser."""
-        designer = ParserDesignerWindow(self)
+        url = self.url_input.text().strip()
+        designer = ParserDesignerWindow(self, url=url)
         if designer.exec():
             # Refresh the model to show the new parser
             self.model.refresh_data()
