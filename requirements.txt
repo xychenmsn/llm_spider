@@ -12,6 +12,9 @@ requests>=2.31.0
 typing-extensions>=4.7.0
 pydantic>=2.4.0
 
+# Web automation
+playwright>=1.40.0
+
 # Optional: for local model support
 ollama>=0.1.5 
 
