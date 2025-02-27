@@ -699,7 +699,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             
             # Call OpenAI API with function calling
             response = openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",  # Use gpt-3.5-turbo instead of o3-mini
+                model="gpt-4o-mini",  # Use gpt-4o-mini as requested
                 messages=messages,
                 temperature=0.7,
                 max_tokens=1000,
