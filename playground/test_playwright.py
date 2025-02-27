@@ -8,6 +8,8 @@ This script demonstrates how to use the PlaywrightController to automate browser
 import os
 import sys
 import asyncio
+import datetime
+import uuid
 from pathlib import Path
 
 # Add the project root to the path so we can import from the project
@@ -15,6 +17,12 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
 from utils.playwright_controller import PlaywrightController, SyncPlaywrightController
+
+def generate_filename(prefix="screenshot"):
+    """Generate a unique filename with timestamp and random string."""
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    random_str = str(uuid.uuid4())[:8]  # Use first 8 chars of UUID
+    return f"{prefix}_{timestamp}_{random_str}.png"
 
 async def test_async_playwright():
     """Test the async PlaywrightController."""
@@ -41,11 +49,15 @@ async def test_async_playwright():
         print(f"Extracted data: {data}")
         
         # Execute a script to get the page title
-        title = await controller.execute_script("return document.title")
+        # For Playwright's evaluate, use a function format instead of a return statement
+        title = await controller.execute_script("() => document.title")
         print(f"Page title: {title}")
         
         # Take a screenshot
-        screenshot_path = os.path.join(project_root, "playground", "screenshot.png")
+        screenshots_dir = os.path.join(project_root, "tmp", "screenshots")
+        os.makedirs(screenshots_dir, exist_ok=True)  # Ensure directory exists
+        screenshot_filename = generate_filename("async")
+        screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
         await controller.take_screenshot(screenshot_path)
         print(f"Screenshot saved to {screenshot_path}")
         
@@ -87,11 +99,15 @@ def test_sync_playwright():
         print(f"Extracted data: {data}")
         
         # Execute a script to get the page title
-        title = controller.execute_script("return document.title")
+        # For Playwright's evaluate, use a function format instead of a return statement
+        title = controller.execute_script("() => document.title")
         print(f"Page title: {title}")
         
         # Take a screenshot
-        screenshot_path = os.path.join(project_root, "playground", "screenshot_sync.png")
+        screenshots_dir = os.path.join(project_root, "tmp", "screenshots")
+        os.makedirs(screenshots_dir, exist_ok=True)  # Ensure directory exists
+        screenshot_filename = generate_filename("sync")
+        screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
         controller.take_screenshot(screenshot_path)
         print(f"Screenshot saved to {screenshot_path}")
         
@@ -106,8 +122,9 @@ def test_sync_playwright():
         print("Browser stopped")
 
 if __name__ == "__main__":
-    # Test the async controller
-    asyncio.run(test_async_playwright())
+    # Run tests in the correct order to avoid event loop issues
+    # First run the sync test (which creates its own event loop)
+    test_sync_playwright()
     
-    # Test the sync controller
-    test_sync_playwright() 
+    # Then run the async test
+    asyncio.run(test_async_playwright()) 
