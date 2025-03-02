@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, Signal, Slot
 from db.db_client import db_client
 from db.models import URLParser
 from parser_designer import ParserDesignerWindow
+from ui.action_table import ActionTableWidget
 
 class URLParserTableModel(QtCore.QAbstractTableModel):
     """Model for displaying URL parsers in a table view."""
@@ -61,70 +62,6 @@ class URLParserTableModel(QtCore.QAbstractTableModel):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
             return self.headers[section]
         return None
-
-
-class ButtonDelegate(QtWidgets.QStyledItemDelegate):
-    """Delegate for rendering action buttons in the table."""
-    
-    edit_clicked = Signal(int)
-    delete_clicked = Signal(int)
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-    
-    def paint(self, painter, option, index):
-        if index.column() == 4:  # Actions column
-            # Create a widget to hold the buttons
-            widget = QtWidgets.QWidget()
-            layout = QtWidgets.QHBoxLayout(widget)
-            layout.setContentsMargins(4, 4, 4, 4)
-            layout.setSpacing(10)
-            
-            # Edit button
-            edit_button = QtWidgets.QPushButton("Edit")
-            layout.addWidget(edit_button)
-            
-            # Delete button
-            delete_button = QtWidgets.QPushButton("Delete")
-            layout.addWidget(delete_button)
-            
-            # Calculate the size and position
-            widget.setGeometry(option.rect)
-            
-            # Use a pixmap to render the widget
-            pixmap = QtGui.QPixmap(option.rect.size())
-            pixmap.fill(Qt.transparent)
-            widget.render(pixmap)
-            
-            # Draw the pixmap
-            painter.drawPixmap(option.rect, pixmap)
-        else:
-            super().paint(painter, option, index)
-    
-    def editorEvent(self, event, model, option, index):
-        if index.column() == 4 and event.type() == QtCore.QEvent.MouseButtonRelease:
-            # Calculate button positions
-            rect = option.rect
-            button_width = rect.width() // 2 - 10
-            
-            # Check if edit button was clicked
-            edit_rect = QtCore.QRect(rect.left() + 4, rect.top() + 4, button_width, rect.height() - 8)
-            if edit_rect.contains(event.position().toPoint()):
-                self.edit_clicked.emit(model.data(model.index(index.row(), 0), Qt.DisplayRole))
-                return True
-                
-            # Check if delete button was clicked
-            delete_rect = QtCore.QRect(rect.right() - button_width - 4, rect.top() + 4, button_width, rect.height() - 8)
-            if delete_rect.contains(event.position().toPoint()):
-                self.delete_clicked.emit(model.data(model.index(index.row(), 0), Qt.DisplayRole))
-                return True
-                
-        return super().editorEvent(event, model, option, index)
-    
-    def sizeHint(self, option, index):
-        if index.column() == 4:
-            return QtCore.QSize(200, 40)
-        return super().sizeHint(option, index)
 
 
 class ParserDialog(QtWidgets.QDialog):
@@ -267,50 +204,44 @@ class MainWindow(QtWidgets.QMainWindow):
         
         layout.addLayout(top_bar)
         
-        # Create a scroll area for the table view
-        scroll_area = QtWidgets.QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        # Container widget for the table
-        table_container = QtWidgets.QWidget()
-        table_layout = QtWidgets.QVBoxLayout(table_container)
-        
-        # Table view for URL parsers
-        self.table_view = QtWidgets.QTableView()
-        self.table_view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.table_view.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.table_view.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.table_view.horizontalHeader().setStretchLastSection(True)
-        self.table_view.verticalHeader().setVisible(False)
-        
-        # Set up the model and delegate
+        # Create the table model
         self.model = URLParserTableModel()
-        self.table_view.setModel(self.model)
         
-        self.button_delegate = ButtonDelegate()
-        self.button_delegate.edit_clicked.connect(self.edit_parser)
-        self.button_delegate.delete_clicked.connect(self.delete_parser)
-        self.table_view.setItemDelegateForColumn(4, self.button_delegate)
+        # Define action buttons for the table
+        action_buttons = [
+            {"name": "edit", "label": "Edit", "width": 80},
+            {"name": "delete", "label": "Delete", "width": 80}
+        ]
+        
+        # Create the action table widget
+        self.table_widget = ActionTableWidget(
+            parent=self,
+            model=self.model,
+            buttons=action_buttons,
+            id_column=0  # ID is in column 0
+        )
+        
+        # Connect the action_triggered signal to our handler
+        self.table_widget.action_triggered.connect(self.handle_action)
         
         # Set column widths
-        self.table_view.setColumnWidth(0, 50)   # ID
-        self.table_view.setColumnWidth(1, 200)  # Name
-        self.table_view.setColumnWidth(2, 300)  # URL Pattern
-        self.table_view.setColumnWidth(3, 200)  # Parser
+        self.table_widget.setColumnWidth(0, 50)   # ID
+        self.table_widget.setColumnWidth(1, 200)  # Name
+        self.table_widget.setColumnWidth(2, 300)  # URL Pattern
+        self.table_widget.setColumnWidth(3, 200)  # Parser
         
-        # Add table to the container layout
-        table_layout.addWidget(self.table_view)
-        
-        # Set the container as the scroll area widget
-        scroll_area.setWidget(table_container)
-        
-        # Add scroll area to the main layout
-        layout.addWidget(scroll_area)
+        # Add table widget to the main layout
+        layout.addWidget(self.table_widget)
         
         # Status bar
         self.statusBar().showMessage("Ready")
+    
+    def handle_action(self, row_id, action_name):
+        """Handle action button clicks from the table."""
+        if action_name == "edit":
+            self.edit_parser(row_id)
+        elif action_name == "delete":
+            self.delete_parser(row_id)
     
     def parse_url(self):
         """Parse the URL entered in the input field."""
@@ -370,7 +301,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if confirm == QtWidgets.QMessageBox.Yes:
             try:
                 db_client.delete(URLParser, parser_id)
-                self.model.refresh_data()
+                self.table_widget.refresh()
                 self.statusBar().showMessage(f"Deleted parser ID: {parser_id}")
             except Exception as e:
                 QtWidgets.QMessageBox.critical(
