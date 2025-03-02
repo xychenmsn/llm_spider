@@ -207,28 +207,38 @@ class MainWindow(QtWidgets.QMainWindow):
         # Create the table model
         self.model = URLParserTableModel()
         
-        # Define action buttons for the table
-        action_buttons = [
-            {"name": "edit", "label": "Edit", "width": 80},
-            {"name": "delete", "label": "Delete", "width": 80}
-        ]
+        # Create a configuration dictionary for the action table
+        table_config = {
+            # Action buttons configuration
+            'buttons': [
+                {"name": "edit", "label": "Edit", "width": 80},
+                {"name": "delete", "label": "Delete", "width": 80}
+            ],
+            
+            # ID column name
+            'id_column_name': "ID",
+            
+            # Column width percentages
+            'column_widths': {
+                "ID": 5,           # Very narrow for ID column
+                "Name": 25,        # 25% of the remaining space
+                "URL Pattern": 45, # 45% of the remaining space
+                "Parser": 25       # 25% of the remaining space
+            },
+            
+            # Disable horizontal scrolling
+            'allow_horizontal_scroll': False
+        }
         
         # Create the action table widget
         self.table_widget = ActionTableWidget(
             parent=self,
             model=self.model,
-            buttons=action_buttons,
-            id_column=0  # ID is in column 0
+            config=table_config
         )
         
         # Connect the action_triggered signal to our handler
         self.table_widget.action_triggered.connect(self.handle_action)
-        
-        # Set column widths
-        self.table_widget.setColumnWidth(0, 50)   # ID
-        self.table_widget.setColumnWidth(1, 200)  # Name
-        self.table_widget.setColumnWidth(2, 300)  # URL Pattern
-        self.table_widget.setColumnWidth(3, 200)  # Parser
         
         # Add table widget to the main layout
         layout.addWidget(self.table_widget)
