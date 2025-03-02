@@ -327,7 +327,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 
                 # Open the parser designer for this parser
                 designer = ParserDesignerWindow(self, parser.id, url=url)
-                designer.exec()
+                designer.parser_saved.connect(self.model.refresh_data)
+                designer.show()
                 return
         
         # No matching parser found
@@ -342,22 +343,21 @@ class MainWindow(QtWidgets.QMainWindow):
         
         if reply == QtWidgets.QMessageBox.Yes:
             designer = ParserDesignerWindow(self, url=url)
-            designer.exec()
+            designer.parser_saved.connect(self.model.refresh_data)
+            designer.show()
     
     def create_parser(self):
         """Open dialog to create a new parser."""
         url = self.url_input.text().strip()
         designer = ParserDesignerWindow(self, url=url)
-        if designer.exec():
-            # Refresh the model to show the new parser
-            self.model.refresh_data()
+        designer.parser_saved.connect(self.model.refresh_data)
+        designer.show()
     
     def edit_parser(self, parser_id):
         """Open dialog to edit an existing parser."""
         designer = ParserDesignerWindow(self, parser_id)
-        if designer.exec():
-            # Refresh the model to show the updated parser
-            self.model.refresh_data()
+        designer.parser_saved.connect(self.model.refresh_data)
+        designer.show()
     
     def delete_parser(self, parser_id):
         """Delete a parser after confirmation."""
