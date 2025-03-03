@@ -40,6 +40,19 @@ class LLMWorker(QObject):
         super().__init__(parent)
         self.is_running = False
         self.llm_client = LLMClient()
+        self.processor_thread = None
+    
+    def cleanup(self):
+        """Clean up resources and terminate threads."""
+        logger.info("Cleaning up LLMWorker resources")
+        if self.processor_thread and self.processor_thread.isRunning():
+            logger.info("Terminating StreamProcessor thread")
+            self.processor_thread.quit()
+            if not self.processor_thread.wait(3000):  # Wait up to 3 seconds
+                logger.warning("StreamProcessor thread did not terminate gracefully, forcing termination")
+                self.processor_thread.terminate()
+                self.processor_thread.wait()
+        self.is_running = False
     
     @Slot(object, bool)
     def call_llm(self, messages: List[Dict[str, str]], stream: bool = True, function_schemas: Optional[List[Dict]] = None, model: str = "gpt-4-turbo-preview"):

@@ -137,6 +137,13 @@ class PlaywrightController(QObject):
 
     def close_browser(self):
         asyncio.run_coroutine_threadsafe(self._close_browser(), self.loop)
+        # Wait for the thread to finish
+        if self.thread.isRunning():
+            self.thread.quit()
+            if not self.thread.wait(5000):  # Wait up to 5 seconds
+                print("PlaywrightController thread did not terminate gracefully, forcing termination")
+                self.thread.terminate()
+                self.thread.wait()
 
     async def _close_browser(self):
         print("PlaywrightController._close_browser")
@@ -148,7 +155,8 @@ class PlaywrightController(QObject):
             self.playwright = None
         self.page = None
         self.debugSignal.emit("Browser closed")
-        self.thread.quit()
+        # Stop the event loop
+        self.loop.call_soon_threadsafe(self.loop.stop)
 
     def get_marked_html(self, data_json):
         asyncio.run_coroutine_threadsafe(self._get_marked_html(data_json), self.loop)

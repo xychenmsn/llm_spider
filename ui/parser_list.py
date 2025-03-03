@@ -165,4 +165,14 @@ class ParserListWindow(QtWidgets.QMainWindow):
             except Exception as e:
                 QtWidgets.QMessageBox.critical(
                     self, "Error", f"Failed to delete parser: {str(e)}"
-                ) 
+                )
+    
+    def closeEvent(self, event):
+        """Handle the window close event to ensure all resources are properly cleaned up."""
+        # Find and close all child windows
+        for child in self.findChildren(QtWidgets.QWidget):
+            if isinstance(child, ParserDesignerWindow) and child.isVisible():
+                child.close()
+        
+        # Accept the event
+        event.accept() 

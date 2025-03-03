@@ -788,10 +788,16 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         if hasattr(self, 'playwright_controller') and self.playwright_controller:
             self.playwright_controller.close_browser()
         
+        # Clean up the LLM worker resources first
+        if hasattr(self, 'llm_worker'):
+            self.llm_worker.cleanup()
+        
         # Clean up the worker thread
         if self.worker_thread.isRunning():
             self.worker_thread.quit()
-            self.worker_thread.wait()
+            if not self.worker_thread.wait(3000):  # Wait up to 3 seconds
+                self.worker_thread.terminate()
+                self.worker_thread.wait()
         
         # Accept the event
         event.accept()
@@ -802,10 +808,16 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         if hasattr(self, 'playwright_controller') and self.playwright_controller:
             self.playwright_controller.close_browser()
         
+        # Clean up the LLM worker resources first
+        if hasattr(self, 'llm_worker'):
+            self.llm_worker.cleanup()
+        
         # Clean up the worker thread
         if self.worker_thread.isRunning():
             self.worker_thread.quit()
-            self.worker_thread.wait()
+            if not self.worker_thread.wait(3000):  # Wait up to 3 seconds
+                self.worker_thread.terminate()
+                self.worker_thread.wait()
         
         # Call the parent method
         super().reject()
