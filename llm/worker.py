@@ -10,7 +10,7 @@ This module provides the worker class for asynchronous LLM calls using Qt.
 import logging
 from typing import List, Dict, Any, Optional
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from .llm_client import LLMClient
 
@@ -43,48 +43,98 @@ class LLMWorker(QObject):
     
     @Slot(object, bool)
     def call_llm(self, messages: List[Dict[str, str]], stream: bool = True, function_schemas: Optional[List[Dict]] = None, model: str = "gpt-4-turbo-preview"):
-        """Call the LLM with the given messages using Qt signals for communication.
-        
-        Args:
-            messages: List of message dictionaries
-            stream: Whether to stream the response
-            function_schemas: Optional list of function schemas
-            model: The model to use
-        """
+        """Call the LLM with the given messages using Qt signals for communication."""
         self.is_running = True
+        logger.info(f"Starting LLM call with stream={stream}")
         
         try:
-            # Define callbacks for the LLMClient
-            def on_stream(chunk: str):
-                self.chunk_received.emit(chunk)
-            
-            def on_tool_call(function_name: str, function_args: Dict):
-                self.function_call_received.emit(function_name, function_args)
-            
-            # Call the LLM client with appropriate callbacks
-            response = self.llm_client.call_llm(
-                messages=messages,
-                stream=stream,
-                function_schemas=function_schemas,
-                model=model,
-                callback_stream=on_stream if stream else None,
-                callback_tool_call=on_tool_call
-            )
-            
             if stream:
-                # Process the generator
-                for _ in response:
-                    pass  # Chunks are handled by the callback
+                logger.info("Initializing streaming response...")
+                # Get the generator for streaming response
+                generator = self.llm_client.call_llm(
+                    messages=messages,
+                    stream=True,
+                    function_schemas=function_schemas,
+                    model=model
+                )
+                
+                # Create a separate thread to process the generator
+                class StreamProcessor(QThread):
+                    def __init__(self, generator, worker):
+                        super().__init__()
+                        self.generator = generator
+                        self.worker = worker
+                    
+                    def run(self):
+                        try:
+                            logger.info("Processing streaming chunks in background thread...")
+                            final_response = None
+                            for item in self.generator:
+                                if isinstance(item, str):
+                                    # This is a content chunk
+                                    logger.debug(f"Emitting content chunk: {item}")
+                                    self.worker.chunk_received.emit(item)
+                                else:
+                                    # This is the final response
+                                    final_response = item
+                                    logger.info(f"Final response received: {final_response}")
+                                    self.worker.response_received.emit(final_response)
+                            
+                            # Process any tool calls
+                            if final_response and final_response.tool_calls:
+                                logger.info(f"Processing {len(final_response.tool_calls)} tool calls")
+                                for tool_call in final_response.tool_calls:
+                                    logger.info(f"Emitting tool call: {tool_call['name']}")
+                                    self.worker.function_call_received.emit(
+                                        tool_call['name'],
+                                        tool_call['arguments']
+                                    )
+                        except Exception as e:
+                            error_msg = str(e)
+                            logger.error(f"Error in stream processing: {error_msg}", exc_info=True)
+                            self.worker.error_occurred.emit(error_msg)
+                        finally:
+                            self.worker.is_running = False
+                            logger.info("LLM call finished")
+                            self.worker.finished.emit()
+                
+                # Start the processor thread
+                self.processor_thread = StreamProcessor(generator, self)
+                self.processor_thread.start()
+                
+                # Return immediately, don't block the UI thread
+                return
             else:
-                # Emit the complete response
+                logger.info("Getting non-streaming response...")
+                # Get complete response for non-streaming mode
+                response = self.llm_client.call_llm(
+                    messages=messages,
+                    stream=False,
+                    function_schemas=function_schemas,
+                    model=model
+                )
+                
+                logger.info(f"Response received: {response}")
                 self.response_received.emit(response)
+                
+                # Process any tool calls
+                if response.tool_calls:
+                    logger.info(f"Processing {len(response.tool_calls)} tool calls")
+                    for tool_call in response.tool_calls:
+                        logger.info(f"Emitting tool call: {tool_call['name']}")
+                        self.function_call_received.emit(
+                            tool_call['name'],
+                            tool_call['arguments']
+                        )
+                
+                self.is_running = False
+                logger.info("LLM call finished")
+                self.finished.emit()
                 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Error in LLM call: {error_msg}")
+            logger.error(f"Error in LLM call: {error_msg}", exc_info=True)
             self.error_occurred.emit(error_msg)
-        
-        finally:
             self.is_running = False
-            logger.info("LLM call finished")
+            logger.info("LLM call finished with error")
             self.finished.emit() 

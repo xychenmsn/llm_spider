@@ -231,6 +231,9 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         # Show a loading indicator
         self.chat_widget.chat_display.append('<div style="color: #999999; font-style: italic;">Assistant is typing...</div>')
         
+        # Track if we're receiving streaming chunks
+        self.receiving_chunks = False
+        
         # Call LLM worker to get a response
         self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=FUNCTION_SCHEMAS)
     
@@ -238,6 +241,24 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         """Handle the complete response from the LLM."""
         # Remove the "typing" indicator
         self.chat_widget._remove_typing_indicator()
+        
+        # If we've been receiving chunks, don't display the final message again
+        # Just add it to the history
+        if hasattr(self, 'receiving_chunks') and self.receiving_chunks:
+            # Just add the message to history without displaying it again
+            if response_message and hasattr(response_message, 'content') and response_message.content:
+                # Finalize the streaming message with the complete content
+                self.chat_widget.finalize_streaming_message(response_message.content)
+                
+                # Add the message to history
+                self.chat_widget.history.add_message(ChatMessage(
+                    ChatMessage.ROLE_ASSISTANT,
+                    response_message.content
+                ))
+                
+                # Reset streaming state
+                self.receiving_chunks = False
+            return
         
         # If there's content, display it
         if response_message and hasattr(response_message, 'content') and response_message.content:
@@ -260,6 +281,9 @@ class ParserDesignerWindow(QtWidgets.QDialog):
     
     def on_llm_chunk(self, chunk):
         """Handle a chunk of the response from the LLM."""
+        # Mark that we're receiving chunks
+        self.receiving_chunks = True
+        
         # Display the chunk
         self.chat_widget.receive_chunk(chunk)
     

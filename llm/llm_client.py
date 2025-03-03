@@ -37,7 +37,7 @@ if not logger.handlers:
 class LLMResponse:
     """Data class to hold LLM response information"""
     content: str
-    tool_calls: Optional[List[ChatCompletionMessageToolCall]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
     role: str = "assistant"
 
 class LLMClient:
@@ -121,27 +121,8 @@ class LLMClient:
         stream: bool = True,
         function_schemas: Optional[List[Dict]] = None,
         model: str = "gpt-4-turbo-preview",
-        callback_stream: Optional[callable] = None,
-        callback_tool_call: Optional[callable] = None
-    ) -> Union[LLMResponse, Generator[str, None, None]]:
-        """Call the LLM with the given messages.
-        
-        Args:
-            messages: List of message dictionaries
-            stream: Whether to stream the response
-            function_schemas: Optional list of function schemas
-            model: The model to use
-            callback_stream: Optional callback for streaming chunks
-            callback_tool_call: Optional callback for tool calls
-            
-        Returns:
-            If stream=False, returns LLMResponse
-            If stream=True, returns a generator of response chunks
-        
-        Raises:
-            RuntimeError: If OpenAI client is not initialized
-            Exception: For any OpenAI API errors
-        """
+    ) -> Union[LLMResponse, Generator[str, None, LLMResponse]]:
+        """Call the LLM with the given messages."""
         if self.client is None:
             raise RuntimeError("OpenAI client is not properly initialized. Please check your API key.")
 
@@ -149,6 +130,11 @@ class LLMClient:
         logger.info(f"Stream mode: {stream}")
         logger.info(f"Number of messages: {len(messages)}")
         logger.info(f"Function schemas provided: {bool(function_schemas)}")
+        
+        # Log messages (excluding potentially sensitive system prompts)
+        for msg in messages:
+            if msg['role'] != 'system':
+                logger.info(f"Message ({msg['role']}): {msg['content'][:100]}...")
 
         params = {
             "model": model,
@@ -160,55 +146,80 @@ class LLMClient:
 
         if function_schemas:
             params["tools"] = function_schemas
+            logger.info(f"Function schemas: {json.dumps(function_schemas, indent=2)}")
 
         try:
+            logger.info("Making OpenAI API call...")
             response = self.client.chat.completions.create(**params)
+            logger.info("OpenAI API call successful")
 
             if stream:
                 collected_chunks = []
                 collected_messages = []
-                complete_response_message = None
 
                 def process_stream():
-                    nonlocal complete_response_message
+                    nonlocal collected_chunks, collected_messages
                     
-                    for chunk in response:
-                        if hasattr(chunk.choices[0].delta, 'tool_calls') and chunk.choices[0].delta.tool_calls:
-                            collected_chunks.append(chunk)
-                            continue
+                    try:
+                        for chunk in response:
+                            delta = chunk.choices[0].delta
+                            logger.debug(f"Received chunk: {delta}")
+                            
+                            # Handle tool calls if present
+                            if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                                logger.info(f"Received tool call chunk: {delta.tool_calls}")
+                                collected_chunks.append(chunk)
+                            
+                            # Handle content if present
+                            if hasattr(delta, 'content') and delta.content:
+                                logger.debug(f"Received content chunk: {delta.content}")
+                                collected_messages.append(delta.content)
+                                yield delta.content
 
-                        content = chunk.choices[0].delta.content
-                        if content:
-                            collected_messages.append(content)
-                            if callback_stream:
-                                callback_stream(content)
-                            yield content
+                        logger.info(f"Stream complete. Collected {len(collected_chunks)} tool call chunks and {len(collected_messages)} content chunks")
 
-                    if collected_chunks:
-                        complete_response_message = self._reconstruct_message_from_chunks(collected_chunks)
-                        
-                        if callback_tool_call and complete_response_message.tool_calls:
-                            for tool_call in complete_response_message.tool_calls:
-                                function_name = tool_call.function.name
-                                function_args = json.loads(tool_call.function.arguments)
-                                callback_tool_call(function_name, function_args)
+                        # After stream ends, yield the complete response with tool calls
+                        # We don't need to include the content again since it was already streamed
+                        if collected_chunks:
+                            logger.info("Processing collected tool call chunks...")
+                            complete_message = self._reconstruct_message_from_chunks(collected_chunks)
+                            logger.info(f"Reconstructed message: {complete_message}")
+                            
+                            # Use the already collected content instead of potentially duplicating it
+                            content = "".join(collected_messages)
+                            
+                            yield LLMResponse(
+                                content=content,
+                                tool_calls=[{
+                                    "name": tc.function.name,
+                                    "arguments": json.loads(tc.function.arguments)
+                                } for tc in complete_message.tool_calls] if complete_message.tool_calls else None,
+                                role=complete_message.role
+                            )
+                        else:
+                            logger.info("No tool calls found, yielding content-only response")
+                            yield LLMResponse(
+                                content="".join(collected_messages),
+                                role="assistant"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error in stream processing: {str(e)}", exc_info=True)
+                        raise
 
                 return process_stream()
             else:
                 response_message = response.choices[0].message
+                logger.info(f"Received non-streaming response: {response_message}")
                 
-                if callback_tool_call and response_message.tool_calls:
-                    for tool_call in response_message.tool_calls:
-                        function_name = tool_call.function.name
-                        function_args = json.loads(tool_call.function.arguments)
-                        callback_tool_call(function_name, function_args)
-
                 return LLMResponse(
                     content=response_message.content,
-                    tool_calls=response_message.tool_calls,
+                    tool_calls=[{
+                        "name": tc.function.name,
+                        "arguments": json.loads(tc.function.arguments)
+                    } for tc in response_message.tool_calls] if response_message.tool_calls else None,
                     role=response_message.role
                 )
 
         except Exception as e:
-            logger.error(f"Error in LLM call: {str(e)}")
+            logger.error(f"Error in LLM call: {str(e)}", exc_info=True)
             raise 

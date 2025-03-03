@@ -39,6 +39,7 @@ class ParserListWindow(QtWidgets.QMainWindow):
         # URL input
         self.url_input = QtWidgets.QLineEdit()
         self.url_input.setPlaceholderText("Enter URL to parse...")
+        self.url_input.setText("https://www.wenxuecity.com/news/2025/02/26/126036413.html")
         top_bar.addWidget(self.url_input, 3)
         
         # Parse button

@@ -9,6 +9,7 @@ This module provides chat-related UI components for the LLM Spider application.
 
 import json
 import re
+import html
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 
@@ -94,6 +95,8 @@ class ChatWidget(QtWidgets.QWidget):
         super().__init__(parent)
         self.history = ChatHistory()
         self.is_processing = False
+        self.current_streaming_message = ""
+        self.is_streaming = False
         self.setup_ui()
         
     def setup_ui(self):
@@ -170,7 +173,14 @@ class ChatWidget(QtWidgets.QWidget):
         self.message_sent.emit(message_text)
     
     def receive_message(self, content: str):
-        """Receive a message from the assistant."""
+        """Receive a complete message from the assistant."""
+        # If we were streaming, clear the streaming state
+        self.is_streaming = False
+        self.current_streaming_message = ""
+        
+        # Remove the typing indicator if it exists
+        self._remove_typing_indicator()
+        
         # Add assistant message to history
         assistant_message = ChatMessage(ChatMessage.ROLE_ASSISTANT, content)
         self.history.add_message(assistant_message)
@@ -180,13 +190,91 @@ class ChatWidget(QtWidgets.QWidget):
     
     def receive_chunk(self, content: str):
         """Receive a chunk of a message from the assistant."""
-        # Append the chunk to the last message in the chat display
-        self.chat_display.moveCursor(QtGui.QTextCursor.End)
-        self.chat_display.insertPlainText(content)
+        # If this is the first chunk, prepare the display
+        if not self.is_streaming:
+            self.is_streaming = True
+            self.current_streaming_message = ""
+            self._remove_typing_indicator()
+            
+            # Start a new assistant message with a unique ID
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            sender = "Assistant"
+            color = "#6aa84f"  # Green
+            
+            # Format header
+            header = f'<div style="margin-top: 10px;"><span style="color: {color}; font-weight: bold;">{sender}</span> <span style="color: #999999; font-size: 0.8em;">({timestamp})</span></div>'
+            
+            # Add the message header to the display
+            self.chat_display.append(header)
+            
+            # Add a placeholder for the streaming content
+            self.chat_display.append('<div id="streaming-content" style="margin-left: 10px;"></div>')
+        
+        # Accumulate the content
+        self.current_streaming_message += content
+        
+        # Format the accumulated content with Markdown-like processing
+        formatted_content = self._format_content(self.current_streaming_message)
+        
+        # Clear the display and re-add everything
+        cursor = self.chat_display.textCursor()
+        cursor.select(QtGui.QTextCursor.Document)
+        cursor.removeSelectedText()
+        
+        # Re-add all messages from history except the current streaming one
+        for message in self.history.messages:
+            if message.role != ChatMessage.ROLE_SYSTEM:  # Skip system messages
+                self.display_message(message)
+        
+        # Add the streaming message header
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        header = f'<div style="margin-top: 10px;"><span style="color: #6aa84f; font-weight: bold;">Assistant</span> <span style="color: #999999; font-size: 0.8em;">({timestamp})</span></div>'
+        self.chat_display.append(header)
+        
+        # Add the current streaming content
+        self.chat_display.append(f'<div style="margin-left: 10px;">{formatted_content}</div>')
+        
+        # Force update to ensure the chunk is displayed immediately
+        self.chat_display.repaint()
         
         # Scroll to bottom
         self.chat_display.verticalScrollBar().setValue(
             self.chat_display.verticalScrollBar().maximum()
+        )
+        
+        # Process Qt events to ensure UI updates
+        QtWidgets.QApplication.processEvents()
+    
+    def _format_content(self, content: str):
+        """Format content with Markdown-like processing."""
+        # Escape HTML content first to prevent rendering issues
+        escaped_content = html.escape(content)
+        
+        # Handle code blocks (after escaping HTML)
+        escaped_content = self._format_code_blocks(escaped_content)
+        
+        # Handle inline code (after code blocks)
+        escaped_content = self._format_inline_code(escaped_content)
+        
+        # Handle links (after escaping HTML)
+        escaped_content = self._format_links(escaped_content)
+        
+        # Format paragraphs
+        paragraphs = escaped_content.split('\n\n')
+        formatted_content = ''.join([f'<p>{p.replace(chr(10), "<br>")}</p>' for p in paragraphs])
+        
+        return formatted_content
+    
+    def _format_inline_code(self, text: str) -> str:
+        """Format inline code in the text."""
+        # Pattern for inline code (single backticks)
+        pattern = r'`([^`]+)`'
+        
+        # Replace inline code with styled spans
+        return re.sub(
+            pattern, 
+            lambda m: f'<code style="background-color: #f5f5f5; padding: 2px 4px; border-radius: 3px; font-family: monospace;">{m.group(1)}</code>', 
+            text
         )
     
     def display_message(self, message: ChatMessage):
@@ -208,18 +296,8 @@ class ChatWidget(QtWidgets.QWidget):
         # Format header
         header = f'<div style="margin-top: 10px;"><span style="color: {color}; font-weight: bold;">{sender}</span> <span style="color: #999999; font-size: 0.8em;">({timestamp})</span></div>'
         
-        # Format content with Markdown-like processing
-        content = message.content
-        
-        # Handle code blocks
-        content = self._format_code_blocks(content)
-        
-        # Handle links
-        content = self._format_links(content)
-        
-        # Format paragraphs
-        paragraphs = content.split('\n\n')
-        formatted_content = ''.join([f'<p>{p.replace(chr(10), "<br>")}</p>' for p in paragraphs])
+        # Format content with our _format_content method
+        formatted_content = self._format_content(message.content)
         
         # Add the message to the display
         self.chat_display.append(f"{header}<div style='margin-left: 10px;'>{formatted_content}</div>")
@@ -231,40 +309,18 @@ class ChatWidget(QtWidgets.QWidget):
     
     def _format_code_blocks(self, text: str) -> str:
         """Format code blocks in the text."""
-        # Simple code block formatting (can be enhanced)
-        in_code_block = False
-        lines = text.split('\n')
-        formatted_lines = []
+        # Use a more robust approach to handle code blocks
+        pattern = r'```(\w*)\n(.*?)```'
         
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            
-            # Check for code block markers
-            if line.strip().startswith('```'):
-                if not in_code_block:
-                    # Start of code block
-                    language = line.strip()[3:].strip()
-                    formatted_lines.append(f'<pre style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; font-family: monospace;">')
-                    in_code_block = True
-                else:
-                    # End of code block
-                    formatted_lines.append('</pre>')
-                    in_code_block = False
-            elif in_code_block:
-                # Inside code block
-                formatted_lines.append(line.replace('<', '&lt;').replace('>', '&gt;'))
-            else:
-                # Regular text
-                formatted_lines.append(line)
-            
-            i += 1
+        # Function to process each code block match
+        def replace_code_block(match):
+            language = match.group(1)
+            code_content = match.group(2)
+            return f'<pre style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; font-family: monospace;">{code_content}</pre>'
         
-        # Close any open code block
-        if in_code_block:
-            formatted_lines.append('</pre>')
-        
-        return '\n'.join(formatted_lines)
+        # Replace code blocks with formatted HTML
+        result = re.sub(pattern, replace_code_block, text, flags=re.DOTALL)
+        return result
     
     def _format_links(self, text: str) -> str:
         """Format links in the text."""
@@ -310,3 +366,40 @@ class ChatWidget(QtWidgets.QWidget):
         cursor.select(QtGui.QTextCursor.LineUnderCursor)
         cursor.removeSelectedText()
         cursor.deletePreviousChar()  # Remove the newline 
+    
+    def finalize_streaming_message(self, final_content=None):
+        """Finalize the streaming message with the complete content."""
+        if not self.is_streaming:
+            return
+            
+        # Use the provided final content or the current accumulated content
+        content = final_content or self.current_streaming_message
+        
+        # Format the content
+        formatted_content = self._format_content(content)
+        
+        # Clear the display and re-add everything
+        cursor = self.chat_display.textCursor()
+        cursor.select(QtGui.QTextCursor.Document)
+        cursor.removeSelectedText()
+        
+        # Re-add all messages from history
+        for message in self.history.messages:
+            if message.role != ChatMessage.ROLE_SYSTEM:  # Skip system messages
+                self.display_message(message)
+        
+        # Add the final message
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        header = f'<div style="margin-top: 10px;"><span style="color: #6aa84f; font-weight: bold;">Assistant</span> <span style="color: #999999; font-size: 0.8em;">({timestamp})</span></div>'
+        self.chat_display.append(header)
+        self.chat_display.append(f'<div style="margin-left: 10px;">{formatted_content}</div>')
+        
+        # Reset streaming state
+        self.is_streaming = False
+        self.current_streaming_message = ""
+        
+        # Force update and scroll
+        self.chat_display.repaint()
+        self.chat_display.verticalScrollBar().setValue(
+            self.chat_display.verticalScrollBar().maximum()
+        ) 

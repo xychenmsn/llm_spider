@@ -60,7 +60,12 @@ class PlaywrightController(QObject):
         if self.loop is None:
             self.errorSignal.emit("Error: Event loop not initialized")
             return
+        # Emit a signal immediately to indicate navigation has started
+        self.debugSignal.emit(f"Starting navigation to {url}")
+        # Run the navigation in the background thread
         asyncio.run_coroutine_threadsafe(self._navigate_to_url(url), self.loop)
+        # Return immediately, don't block the UI thread
+        return
 
     async def _navigate_to_url(self, url):
         # Wait for the browser to be ready
