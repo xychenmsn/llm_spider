@@ -7,10 +7,8 @@ LLM Spider - Chat Components
 This module provides chat-related UI components for the LLM Spider application.
 """
 
-# Re-export the classes from the new modules
-from ui.chat.chat_message import ChatMessage
-from ui.chat.chat_history import ChatHistory
-from ui.chat.chat_widget import ChatWidget
+from .chat_message import ChatMessage
+from .chat_history import ChatHistory
+from .chat_widget import ChatWidget
 
-# For backward compatibility
 __all__ = ['ChatMessage', 'ChatHistory', 'ChatWidget'] 
