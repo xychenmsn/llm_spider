@@ -223,7 +223,11 @@ class ChatWidget(QtWidgets.QWidget):
         
         # Re-add all messages from history except the current streaming one
         for message in self.history.messages:
-            if message.role != ChatMessage.ROLE_SYSTEM:  # Skip system messages
+            if message.role == ChatMessage.ROLE_SYSTEM:
+                # Display system messages with a different style
+                timestamp = message.timestamp.strftime("%H:%M:%S")
+                self.chat_display.append(f'<div style="color: #666666; font-style: italic; margin-top: 5px;">{message.content} <span style="color: #999999; font-size: 0.8em;">({timestamp})</span></div>')
+            elif message.role != ChatMessage.ROLE_SYSTEM:  # Skip system messages
                 self.display_message(message)
         
         # Add the streaming message header
@@ -385,7 +389,11 @@ class ChatWidget(QtWidgets.QWidget):
         
         # Re-add all messages from history
         for message in self.history.messages:
-            if message.role != ChatMessage.ROLE_SYSTEM:  # Skip system messages
+            if message.role == ChatMessage.ROLE_SYSTEM:
+                # Display system messages with a different style
+                timestamp = message.timestamp.strftime("%H:%M:%S")
+                self.chat_display.append(f'<div style="color: #666666; font-style: italic; margin-top: 5px;">{message.content} <span style="color: #999999; font-size: 0.8em;">({timestamp})</span></div>')
+            elif message.role != ChatMessage.ROLE_SYSTEM:
                 self.display_message(message)
         
         # Add the final message

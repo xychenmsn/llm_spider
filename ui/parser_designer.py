@@ -339,8 +339,11 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         if not url:
             return {"error": "No URL provided"}
         
-        # Add status message to chat
-        self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Opening browser...</div>')
+        # Add status message to chat and history
+        browser_message = "Opening browser..."
+        self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{browser_message}</div>')
+        # Add to history as system message
+        self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, browser_message))
         
         try:
             # Create a PlaywrightController instance from fast_spider
@@ -371,15 +374,21 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         except Exception as e:
             error_message = f"Error starting browser: {str(e)}"
             self.chat_widget.chat_display.append(f'<div style="color: #FF0000;">{error_message}</div>')
+            # Add error to history
+            self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, error_message))
             return {"error": error_message}
     
     def _on_playwright_debug(self, message: str):
         """Handle debug messages from the PlaywrightController."""
         self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{message}</div>')
+        # Add to history as system message
+        self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, message))
     
     def _on_playwright_error(self, error: str):
         """Handle error messages from the PlaywrightController."""
-        self.chat_widget.chat_display.append(f'<div style="color: #ff0000; font-style: italic;">Error: {error}</div>')
+        self.chat_widget.chat_display.append(f'<div style="color: #FF0000;">{error}</div>')
+        # Add to history as system message
+        self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, f"Error: {error}"))
     
     def _on_html_received(self, html: str):
         """Handle the HTML content received from the PlaywrightController."""
@@ -387,14 +396,20 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         self.html_content = html
         
         # Update the chat with success message
-        self.chat_widget.chat_display.append('<div style="color: #008800; font-style: italic;">HTML content retrieved successfully!</div>')
+        html_message = "HTML content retrieved successfully!"
+        self.chat_widget.chat_display.append(f'<div style="color: #008800; font-style: italic;">{html_message}</div>')
+        # Add to history as system message
+        self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, html_message))
         
         # Take screenshot asynchronously
         self._take_screenshot_async()
         
         # Check if we have a pending parse request
         if hasattr(self, 'pending_parse_type') and self.pending_parse_type:
-            self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Continuing with parsing...</div>')
+            parsing_message = "Continuing with parsing..."
+            self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{parsing_message}</div>')
+            # Add to history as system message
+            self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, parsing_message))
             
             # Parse with the pending parser type
             parse_result = self._parse_with_parser(
@@ -412,7 +427,10 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             self.pending_parse_type = None
             self.pending_parse_url = None
         elif self.parser_type and self.parser_config:
-            self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Continuing with parsing...</div>')
+            parsing_message = "Continuing with parsing..."
+            self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{parsing_message}</div>')
+            # Add to history as system message
+            self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, parsing_message))
             
             # Parse with the configured parser
             parse_result = self._parse_with_parser(self.url, self.parser_type)
@@ -490,7 +508,10 @@ class ParserDesignerWindow(QtWidgets.QDialog):
                     pass
                 
                 # Close the browser
-                self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Closing browser...</div>')
+                closing_message = "Closing browser..."
+                self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{closing_message}</div>')
+                # Add to history as system message
+                self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, closing_message))
                 self.playwright_controller.close_browser()
             except Exception as e:
                 self.chat_widget.chat_display.append(f'<div style="color: #ff0000; font-style: italic;">Error processing screenshot: {str(e)}</div>')
@@ -516,7 +537,10 @@ class ParserDesignerWindow(QtWidgets.QDialog):
                     self.chat_widget.chat_display.append('</div>')
                 
                 # Close the browser
-                self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Closing browser...</div>')
+                closing_message = "Closing browser..."
+                self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{closing_message}</div>')
+                # Add to history as system message
+                self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, closing_message))
                 self.playwright_controller.close_browser()
         
         # For now, we'll use the synchronous method as a fallback
@@ -542,7 +566,10 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             self.chat_widget.chat_display.append('</div>')
         
         # Close the browser
-        self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Closing browser...</div>')
+        closing_message = "Closing browser..."
+        self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{closing_message}</div>')
+        # Add to history as system message
+        self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, closing_message))
         self.playwright_controller.close_browser()
     
     def _create_list_parser(self, selector: str, attribute: str, description: str) -> Dict[str, Any]:
@@ -695,6 +722,8 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         except Exception as e:
             error_msg = f"Error parsing with parser: {str(e)}"
             self.chat_widget.chat_display.append(f'<div style="color: red; padding: 10px; border-radius: 5px; margin: 10px 0;">{error_msg}</div>')
+            # Add to history as system message
+            self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, error_msg))
             return {"error": error_msg}
     
     def open_browser(self):
