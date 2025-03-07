@@ -10,7 +10,6 @@ This module provides a UI for designing URL parsers with LLM assistance.
 import os
 import json
 import logging
-import base64
 from typing import Dict, Any, Optional
 from datetime import datetime
 
@@ -21,7 +20,7 @@ from PySide6.QtGui import QPixmap, QImage
 from ui.chat import ChatMessage, ChatHistory, ChatWidget
 from llm.worker import LLMWorker
 from llm.functions import FUNCTION_SCHEMAS, FunctionExecutor
-from scraping.utils import fetch_webpage_html, take_webpage_screenshot, parse_list_page, parse_content_page
+from scraping.utils import fetch_webpage_html, parse_list_page, parse_content_page
 from db.models import URLParser
 from db.db_client import db_client
 
@@ -48,7 +47,6 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         
         # Parser data
         self.html_content = None
-        self.screenshot_data = None
         self.parser_config = {}
         self.parsed_results = None
         
@@ -335,7 +333,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         self.chat_widget.set_processing(False)
     
     def _fetch_webpage(self, url: str) -> Dict[str, Any]:
-        """Fetch the HTML content and screenshot of a webpage."""
+        """Fetch the HTML content of a webpage."""
         if not url:
             url = self.url
         
@@ -404,8 +402,12 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         # Add to history as system message
         self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, html_message))
         
-        # Take screenshot asynchronously
-        self._take_screenshot_async()
+        # Close the browser
+        closing_message = "Closing browser..."
+        self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{closing_message}</div>')
+        # Add to history as system message
+        self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, closing_message))
+        self.playwright_controller.close_browser()
         
         # Check if we have a pending parse request
         if hasattr(self, 'pending_parse_url') and self.pending_parse_url:
@@ -445,7 +447,6 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             response_data = {
                 'url': self.url,
                 'html_preview': html_preview,
-                'has_screenshot': True,
                 'html_length': len(self.html_content)
             }
             self.chat_widget.history.add_message(ChatMessage(
@@ -455,121 +456,6 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         
         # Call the LLM again with the updated chat history
         self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=FUNCTION_SCHEMAS)
-    
-    def _take_screenshot_async(self):
-        """Take a screenshot asynchronously using the PlaywrightController."""
-        if not hasattr(self, 'playwright_controller') or not self.playwright_controller:
-            return
-        
-        # Add status message
-        self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Taking screenshot...</div>')
-        
-        # Create a temporary file path for the screenshot
-        import tempfile
-        import os
-        
-        temp_dir = tempfile.gettempdir()
-        screenshot_path = os.path.join(temp_dir, f"screenshot_{int(datetime.now().timestamp())}.jpg")
-        
-        # Connect a one-time signal handler for when the screenshot is taken
-        def on_screenshot_taken():
-            try:
-                # Read the screenshot file
-                with open(screenshot_path, 'rb') as f:
-                    screenshot_bytes = f.read()
-                
-                # Convert to base64
-                import base64
-                self.screenshot_data = base64.b64encode(screenshot_bytes).decode('utf-8')
-                
-                # Display the screenshot in the chat
-                if self.screenshot_data:
-                    # Create a QImage from the base64 data
-                    image_data = base64.b64decode(self.screenshot_data)
-                    image = QImage()
-                    image.loadFromData(image_data)
-                    
-                    # Scale the image to a reasonable size
-                    max_width = 600
-                    if image.width() > max_width:
-                        image = image.scaledToWidth(max_width, Qt.SmoothTransformation)
-                    
-                    # Add the image to the chat
-                    self.chat_widget.chat_display.append('<div style="text-align: center;">')
-                    self.chat_widget.chat_display.append('<p style="color: #666666; font-style: italic;">Screenshot:</p>')
-                    self.chat_widget.chat_display.insertHtml(f'<img src="data:image/jpeg;base64,{self.screenshot_data}" style="max-width: {max_width}px; max-height: 400px;" />')
-                    self.chat_widget.chat_display.append('</div>')
-                
-                # Clean up the temporary file
-                try:
-                    os.remove(screenshot_path)
-                except:
-                    pass
-                
-                # Close the browser
-                closing_message = "Closing browser..."
-                self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{closing_message}</div>')
-                # Add to history as system message
-                self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, closing_message))
-                self.playwright_controller.close_browser()
-            except Exception as e:
-                self.chat_widget.chat_display.append(f'<div style="color: #ff0000; font-style: italic;">Error processing screenshot: {str(e)}</div>')
-                # Fall back to the synchronous method
-                self.screenshot_data = take_webpage_screenshot(self.url)
-                
-                # Display the screenshot in the chat
-                if self.screenshot_data:
-                    # Create a QImage from the base64 data
-                    image_data = base64.b64decode(self.screenshot_data)
-                    image = QImage()
-                    image.loadFromData(image_data)
-                    
-                    # Scale the image to a reasonable size
-                    max_width = 600
-                    if image.width() > max_width:
-                        image = image.scaledToWidth(max_width, Qt.SmoothTransformation)
-                    
-                    # Add the image to the chat
-                    self.chat_widget.chat_display.append('<div style="text-align: center;">')
-                    self.chat_widget.chat_display.append('<p style="color: #666666; font-style: italic;">Screenshot (fallback method):</p>')
-                    self.chat_widget.chat_display.insertHtml(f'<img src="data:image/jpeg;base64,{self.screenshot_data}" style="max-width: {max_width}px; max-height: 400px;" />')
-                    self.chat_widget.chat_display.append('</div>')
-                
-                # Close the browser
-                closing_message = "Closing browser..."
-                self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{closing_message}</div>')
-                # Add to history as system message
-                self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, closing_message))
-                self.playwright_controller.close_browser()
-        
-        # For now, we'll use the synchronous method as a fallback
-        # TODO: Implement proper asynchronous screenshot capture with the PlaywrightController
-        self.screenshot_data = take_webpage_screenshot(self.url)
-        
-        # Display the screenshot in the chat
-        if self.screenshot_data:
-            # Create a QImage from the base64 data
-            image_data = base64.b64decode(self.screenshot_data)
-            image = QImage()
-            image.loadFromData(image_data)
-            
-            # Scale the image to a reasonable size
-            max_width = 600
-            if image.width() > max_width:
-                image = image.scaledToWidth(max_width, Qt.SmoothTransformation)
-            
-            # Add the image to the chat
-            self.chat_widget.chat_display.append('<div style="text-align: center;">')
-            self.chat_widget.chat_display.append('<p style="color: #666666; font-style: italic;">Screenshot:</p>')
-            self.chat_widget.chat_display.insertHtml(f'<img src="data:image/jpeg;base64,{self.screenshot_data}" style="max-width: {max_width}px; max-height: 400px;" />')
-            self.chat_widget.chat_display.append('</div>')
-        
-        # Close the browser
-        closing_message = "Closing browser..."
-        self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{closing_message}</div>')
-        # Add to history as system message
-        self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, closing_message))
-        self.playwright_controller.close_browser()
     
     def _parse_with_parser(self, url: str, parser_config: Dict[str, Any]) -> Dict[str, Any]:
         """Parse a webpage using the LLM-generated parser."""

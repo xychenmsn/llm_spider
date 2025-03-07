@@ -29,7 +29,7 @@ FUNCTION_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "fetch_webpage",
-            "description": "Fetch the HTML content and screenshot of a webpage",
+            "description": "Fetch the HTML content of a webpage",
             "parameters": {
                 "type": "object",
                 "properties": {

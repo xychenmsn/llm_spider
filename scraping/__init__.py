@@ -1,2 +1,2 @@
-from scraping.utils import fetch_webpage_html, take_webpage_screenshot, parse_list_page, parse_content_page
+from scraping.utils import fetch_webpage_html, parse_list_page, parse_content_page
 from scraping.playwright_controller import PlaywrightController
