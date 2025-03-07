@@ -49,12 +49,10 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         # Parser data
         self.html_content = None
         self.screenshot_data = None
-        self.parser_type = None  # 'list' or 'content'
         self.parser_config = {}
         self.parsed_results = None
         
         # Pending parse request data
-        self.pending_parse_type = None
         self.pending_parse_url = None
         
         # Set up function executor
@@ -189,7 +187,11 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             "Your goal is to help the user create a parser that can extract relevant information from URLs. "
             "You can suggest CSS selectors, parsing strategies, and help with implementation details. "
             "Be specific and provide code examples when appropriate. "
-            "You have access to functions that can fetch webpage content, create parsers, and parse webpages."
+            "You have access to functions that can fetch webpage content and parse webpages using your generated parser configurations."
+            "\n\nYou should directly generate parser configurations based on the webpage content. "
+            "A parser configuration should include a 'type' field ('list' or 'content') and appropriate selectors. "
+            "For list parsers, include 'selector' and 'attribute' fields. "
+            "For content parsers, include 'title_selector', 'date_selector', and 'body_selector' fields."
         )
         
         if self.parser:
@@ -219,7 +221,8 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             welcome_message = (
                 "Welcome to the Parser Designer! I'm here to help you create a URL parser. "
                 "Let's start by discussing what kind of URLs you want to parse and what information you want to extract. "
-                "You can ask me questions, request code examples, or get suggestions for CSS selectors."
+                "You can ask me questions, request code examples, or get suggestions for CSS selectors. "
+                "I'll directly generate parser configurations based on the webpage content."
             )
             self.chat_widget.receive_message(welcome_message)
     
@@ -291,9 +294,9 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         """Handle a function call from the LLM."""
         # Execute the function
         if function_name == "parse_with_parser" and not self.html_content:
-            # Store the parser type and URL for later use
-            self.pending_parse_type = function_args.get("parser_type", "")
+            # Store the URL and parser config for later use
             self.pending_parse_url = function_args.get("url", self.url)
+            self.parser_config = function_args.get("parser_config", {})
             
             # Add a message to the chat
             self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Need to fetch HTML before parsing...</div>')
@@ -405,17 +408,14 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         self._take_screenshot_async()
         
         # Check if we have a pending parse request
-        if hasattr(self, 'pending_parse_type') and self.pending_parse_type:
+        if hasattr(self, 'pending_parse_url') and self.pending_parse_url:
             parsing_message = "Continuing with parsing..."
             self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{parsing_message}</div>')
             # Add to history as system message
             self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, parsing_message))
             
             # Parse with the pending parser type
-            parse_result = self._parse_with_parser(
-                getattr(self, 'pending_parse_url', self.url), 
-                self.pending_parse_type
-            )
+            parse_result = self._parse_with_parser(self.pending_parse_url, self.parser_config)
             
             # Add the parse result to the chat history
             self.chat_widget.history.add_message(ChatMessage(
@@ -424,16 +424,15 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             ))
             
             # Clear the pending parse request
-            self.pending_parse_type = None
             self.pending_parse_url = None
-        elif self.parser_type and self.parser_config:
+        elif self.parser_config:
             parsing_message = "Continuing with parsing..."
             self.chat_widget.chat_display.append(f'<div style="color: #666666; font-style: italic;">{parsing_message}</div>')
             # Add to history as system message
             self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, parsing_message))
             
             # Parse with the configured parser
-            parse_result = self._parse_with_parser(self.url, self.parser_type)
+            parse_result = self._parse_with_parser(self.url, self.parser_config)
             
             # Add the parse result to the chat history
             self.chat_widget.history.add_message(ChatMessage(
@@ -572,55 +571,8 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_SYSTEM, closing_message))
         self.playwright_controller.close_browser()
     
-    def _create_list_parser(self, selector: str, attribute: str, description: str) -> Dict[str, Any]:
-        """Create a parser for a list page."""
-        self.parser_type = "list"
-        self.parser_config = {
-            "selector": selector,
-            "attribute": attribute,
-            "description": description
-        }
-        
-        # Update the name input if it's empty
-        if not self.name_input.text():
-            self.name_input.setText(f"List Parser - {self.url}")
-        
-        # Update the URL pattern if it's empty
-        if not self.url_input.text():
-            self.url_input.setText(self.url)
-        
-        return {
-            "parser_type": "list",
-            "config": self.parser_config,
-            "message": "List parser created successfully"
-        }
-    
-    def _create_content_parser(self, title_selector: str, date_selector: str, body_selector: str, description: str) -> Dict[str, Any]:
-        """Create a parser for a content page."""
-        self.parser_type = "content"
-        self.parser_config = {
-            "title_selector": title_selector,
-            "date_selector": date_selector,
-            "body_selector": body_selector,
-            "description": description
-        }
-        
-        # Update the name input if it's empty
-        if not self.name_input.text():
-            self.name_input.setText(f"Content Parser - {self.url}")
-        
-        # Update the URL pattern if it's empty
-        if not self.url_input.text():
-            self.url_input.setText(self.url)
-        
-        return {
-            "parser_type": "content",
-            "config": self.parser_config,
-            "message": "Content parser created successfully"
-        }
-    
-    def _parse_with_parser(self, url: str, parser_type: str) -> Dict[str, Any]:
-        """Parse a webpage using the created parser."""
+    def _parse_with_parser(self, url: str, parser_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse a webpage using the LLM-generated parser."""
         try:
             if not url:
                 url = self.url
@@ -639,13 +591,16 @@ class ParserDesignerWindow(QtWidgets.QDialog):
                     "message": "Fetching HTML content first. Parsing will continue when the content is available."
                 }
             
-            if parser_type == "list" or self.parser_type == "list":
+            # Store the parser configuration
+            self.parser_config = parser_config
+            
+            # Determine parser type from the configuration
+            parser_type = parser_config.get("type", "")
+            
+            if parser_type == "list":
                 # Parse as a list page
-                if not self.parser_config:
-                    return {"error": "No list parser configuration available"}
-                
-                selector = self.parser_config.get("selector", "")
-                attribute = self.parser_config.get("attribute", "href")
+                selector = parser_config.get("selector", "")
+                attribute = parser_config.get("attribute", "href")
                 
                 urls = parse_list_page(self.html_content, selector, attribute)
                 self.parsed_results = urls
@@ -676,14 +631,11 @@ class ParserDesignerWindow(QtWidgets.QDialog):
                     "has_more": len(urls) > 10
                 }
             
-            elif parser_type == "content" or self.parser_type == "content":
+            elif parser_type == "content":
                 # Parse as a content page
-                if not self.parser_config:
-                    return {"error": "No content parser configuration available"}
-                
-                title_selector = self.parser_config.get("title_selector", "")
-                date_selector = self.parser_config.get("date_selector", "")
-                body_selector = self.parser_config.get("body_selector", "")
+                title_selector = parser_config.get("title_selector", "")
+                date_selector = parser_config.get("date_selector", "")
+                body_selector = parser_config.get("body_selector", "")
                 
                 content = parse_content_page(self.html_content, title_selector, date_selector, body_selector)
                 self.parsed_results = content
@@ -734,7 +686,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         )
     
     def save_parser(self):
-        """Save the parser with the chat history."""
+        """Save the parser to the database."""
         name = self.name_input.text().strip()
         url_pattern = self.url_input.text().strip()
         
@@ -744,9 +696,12 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             )
             return
         
+        # Determine parser type from the configuration
+        parser_type = self.parser_config.get("type", "custom_parser")
+        
         # Prepare parser data
         parser_data = {
-            "type": self.parser_type,
+            "type": parser_type,
             "config": self.parser_config,
             "description": self.parser_config.get("description", "")
         }
@@ -759,7 +714,6 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         
         if not self.parser:
             # Create a new parser
-            parser_type = self.parser_type or "custom_parser"
             self.parser = URLParser(
                 name=name,
                 url_pattern=url_pattern,
