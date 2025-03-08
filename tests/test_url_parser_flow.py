@@ -252,8 +252,7 @@ Common Memory Keys:
             response = wrapper.chat(
                 "Hello, I need help parsing a website",
                 enable_functions=True,
-                custom_function_schemas=custom_schemas,
-                stream=False
+                custom_function_schemas=custom_schemas
             )
             print(f"LLM: {response.content}")
             
@@ -262,8 +261,7 @@ Common Memory Keys:
             response = wrapper.chat(
                 "https://www.wenxuecity.com/news/2025/02/25/126034170.html",
                 enable_functions=True,
-                custom_function_schemas=custom_schemas,
-                stream=False
+                custom_function_schemas=custom_schemas
             )
             print(f"LLM: {response.content}")
             print(f"Memory state: {json.dumps(wrapper.memory, indent=2)}")
@@ -273,8 +271,7 @@ Common Memory Keys:
             response = wrapper.chat(
                 "Yes, the extracted data looks good",
                 enable_functions=True,
-                custom_function_schemas=custom_schemas,
-                stream=False
+                custom_function_schemas=custom_schemas
             )
             print(f"LLM: {response.content}")
             print(f"Memory state: {json.dumps(wrapper.memory, indent=2)}")
@@ -284,8 +281,7 @@ Common Memory Keys:
             response = wrapper.chat(
                 "Yes, please test the parser with name 'first_attempt'",
                 enable_functions=True,
-                custom_function_schemas=custom_schemas,
-                stream=False
+                custom_function_schemas=custom_schemas
             )
             print(f"LLM: {response.content}")
             
@@ -294,8 +290,7 @@ Common Memory Keys:
             response = wrapper.chat(
                 "Please fix the parser and try again",
                 enable_functions=True,
-                custom_function_schemas=custom_schemas,
-                stream=False
+                custom_function_schemas=custom_schemas
             )
             print(f"LLM: {response.content}")
             print(f"Memory state: {json.dumps(wrapper.memory, indent=2)}")
@@ -305,8 +300,7 @@ Common Memory Keys:
             response = wrapper.chat(
                 "Can you help me book a flight to New York?",
                 enable_functions=True,
-                custom_function_schemas=custom_schemas,
-                stream=False
+                custom_function_schemas=custom_schemas
             )
             print(f"LLM: {response.content}")
             
@@ -315,8 +309,7 @@ Common Memory Keys:
             response = wrapper.chat(
                 "What else can I do with this parser?",
                 enable_functions=True,
-                custom_function_schemas=custom_schemas,
-                stream=False
+                custom_function_schemas=custom_schemas
             )
             print(f"LLM: {response.content}")
             
@@ -390,42 +383,42 @@ def test_url_parser_flow_with_mocked_responses():
         
         # Step 1: Initial greeting
         print("\n--- Step 1: Initial greeting ---")
-        response = wrapper.chat("Hello, I need help parsing a website", stream=False)
+        response = wrapper.chat("Hello, I need help parsing a website")
         print(f"LLM: {response.content}")
         
         # Step 2: User provides a URL
         print("\n--- Step 2: User provides a URL ---")
-        response = wrapper.chat("@https://www.wenxuecity.com/news/2025/02/25/126034170.html", stream=False)
+        response = wrapper.chat("@https://www.wenxuecity.com/news/2025/02/25/126034170.html")
         print(f"LLM: {response.content}")
         
         # Step 3: User confirms the extracted data
         print("\n--- Step 3: User confirms the extracted data ---")
-        response = wrapper.chat("Yes, the title, body, and date look good", stream=False)
+        response = wrapper.chat("Yes, the title, body, and date look good")
         print(f"LLM: {response.content}")
         
         # Step 4: User confirms to test the parser (first attempt - will fail)
         print("\n--- Step 4: User confirms to test the parser (first attempt) ---")
-        response = wrapper.chat("Yes, please test the parser", stream=False)
+        response = wrapper.chat("Yes, please test the parser")
         print(f"LLM: {response.content}")
         
         # Step 5: User asks to fix the parser
         print("\n--- Step 5: User asks to fix the parser ---")
-        response = wrapper.chat("Please fix the parser and try again", stream=False)
+        response = wrapper.chat("Please fix the parser and try again")
         print(f"LLM: {response.content}")
         
         # Step 6: User confirms to test the improved parser
         print("\n--- Step 6: User confirms to test the improved parser ---")
-        response = wrapper.chat("Yes, please test the improved parser", stream=False)
+        response = wrapper.chat("Yes, please test the improved parser")
         print(f"LLM: {response.content}")
         
         # Step 7: User asks for an unrelated task
         print("\n--- Step 7: User asks for an unrelated task ---")
-        response = wrapper.chat("Can you help me book a flight to New York?", stream=False)
+        response = wrapper.chat("Can you help me book a flight to New York?")
         print(f"LLM: {response.content}")
         
         # Step 8: User asks what else can be done
         print("\n--- Step 8: User asks what else can be done ---")
-        response = wrapper.chat("What else can I do with this parser?", stream=False)
+        response = wrapper.chat("What else can I do with this parser?")
         print(f"LLM: {response.content}")
 
 def main():

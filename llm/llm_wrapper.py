@@ -477,7 +477,7 @@ ALWAYS check memory before asking the user for information they've already provi
         self, 
         user_input: str, 
         focus_mode: Optional[bool] = None,
-        stream: bool = True,
+        stream: bool = False,
         enable_functions: Optional[bool] = None,
         custom_function_schemas: Optional[List[Dict]] = None,
         model: Optional[str] = None
