@@ -12,10 +12,18 @@ This module provides a wrapper around the LLMClient that adds:
 
 import json
 import logging
+import os
 from typing import List, Dict, Any, Optional, Generator, Union, Tuple
 
-from .llm_client import LLMClient, LLMResponse
-from .functions import get_function_schemas
+from dotenv import load_dotenv
+import litellm
+from litellm.utils import ModelResponse
+
+from .llm_client import LLMClient, LLMResponse, LLMProvider
+from .function_manager import get_function_schemas
+
+# Load environment variables
+load_dotenv()
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -39,7 +47,8 @@ class LLMWrapper:
         system_prompt: str,
         llm_client: Optional[LLMClient] = None,
         max_history_tokens: int = 4000,
-        model: str = "gpt-4-turbo-preview",
+        model: str = None,
+        provider: Union[str, LLMProvider] = None,
         focus_mode: bool = False,
         enable_functions: bool = False,
         custom_function_schemas: Optional[List[Dict]] = None
@@ -52,14 +61,24 @@ class LLMWrapper:
             llm_client: An existing LLMClient instance, or None to create a new one
             max_history_tokens: Maximum number of tokens to include from history
             model: The LLM model to use
+            provider: The LLM provider to use
             focus_mode: Whether to enable focus mode by default
             enable_functions: Whether to enable function calling
             custom_function_schemas: Optional custom function schemas to use instead of registered ones
         """
         self.system_prompt = system_prompt
-        self.client = llm_client or LLMClient()
+        
+        # Initialize the LLM client
+        if llm_client:
+            self.client = llm_client
+        else:
+            self.client = LLMClient(
+                provider=provider,
+                model=model
+            )
+            
+        self.model = model or self.client.model
         self.max_history_tokens = max_history_tokens
-        self.model = model
         self.history: List[Dict[str, str]] = []
         self.focus_mode = focus_mode
         self.enable_functions = enable_functions
@@ -73,6 +92,8 @@ class LLMWrapper:
         logger.info(f"Focus mode: {focus_mode}")
         logger.info(f"Function calling enabled: {enable_functions}")
         logger.info(f"Custom function schemas provided: {bool(custom_function_schemas)}")
+        logger.info(f"Using model: {self.model}")
+        logger.info(f"Using provider: {self.client.provider}")
         
     def _estimate_tokens(self, text: str) -> int:
         """
@@ -146,7 +167,8 @@ class LLMWrapper:
         focus_mode: Optional[bool] = None,
         stream: bool = True,
         enable_functions: Optional[bool] = None,
-        custom_function_schemas: Optional[List[Dict]] = None
+        custom_function_schemas: Optional[List[Dict]] = None,
+        model: Optional[str] = None
     ) -> Union[LLMResponse, Generator[str, None, LLMResponse]]:
         """
         Send a message to the LLM and get a response.
@@ -157,6 +179,7 @@ class LLMWrapper:
             stream: Whether to stream the response
             enable_functions: Whether to enable function calling (overrides the instance setting if provided)
             custom_function_schemas: Optional custom function schemas (overrides the instance setting if provided)
+            model: Optional model override
             
         Returns:
             LLM response or generator
@@ -165,6 +188,7 @@ class LLMWrapper:
         use_focus_mode = self.focus_mode if focus_mode is None else focus_mode
         use_enable_functions = self.enable_functions if enable_functions is None else enable_functions
         use_custom_schemas = custom_function_schemas if custom_function_schemas is not None else self.custom_function_schemas
+        use_model = model if model is not None else self.model
         
         messages = self._prepare_messages(user_input, use_focus_mode)
         
@@ -181,7 +205,7 @@ class LLMWrapper:
             messages=messages,
             stream=stream,
             function_schemas=function_schemas,
-            model=self.model
+            model=use_model
         )
         
         # If streaming, we need to process the generator
@@ -228,4 +252,38 @@ class LLMWrapper:
         
     def get_history(self) -> List[Dict[str, str]]:
         """Get the current chat history."""
-        return self.history.copy() 
+        return self.history.copy()
+        
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """Set a new system prompt."""
+        self.system_prompt = system_prompt
+        logger.info(f"System prompt updated: {system_prompt[:50]}...")
+        
+    def set_model(self, model: str) -> None:
+        """Set a new model."""
+        self.model = model
+        logger.info(f"Model updated to: {model}")
+        
+    def set_provider(self, provider: Union[str, LLMProvider]) -> None:
+        """Set a new provider."""
+        # Create a new client with the new provider
+        self.client = LLMClient(
+            provider=provider,
+            model=self.model
+        )
+        logger.info(f"Provider updated to: {provider}")
+        
+    def set_focus_mode(self, focus_mode: bool) -> None:
+        """Set focus mode."""
+        self.focus_mode = focus_mode
+        logger.info(f"Focus mode set to: {focus_mode}")
+        
+    def set_enable_functions(self, enable_functions: bool) -> None:
+        """Set function calling."""
+        self.enable_functions = enable_functions
+        logger.info(f"Function calling set to: {enable_functions}")
+        
+    def set_custom_function_schemas(self, custom_function_schemas: Optional[List[Dict]]) -> None:
+        """Set custom function schemas."""
+        self.custom_function_schemas = custom_function_schemas
+        logger.info(f"Custom function schemas updated: {bool(custom_function_schemas)}") 

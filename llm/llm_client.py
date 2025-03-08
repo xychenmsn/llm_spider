@@ -205,19 +205,11 @@ class LLMClient:
         elif isinstance(response, ModelResponse):
             # Handle litellm ModelResponse
             return {
-                "content": response.choices[0].message.content if response.choices else "",
+                "content": response.choices[0].message.content if response.choices and hasattr(response.choices[0].message, 'content') else "",
                 "tool_calls": self._extract_tool_calls_from_litellm(response),
-                "role": response.choices[0].message.role if response.choices else "assistant",
+                "role": response.choices[0].message.role if response.choices and hasattr(response.choices[0].message, 'role') else "assistant",
                 "model": response.model,
                 "usage": response.usage._asdict() if hasattr(response, "usage") else None
-            }
-        elif hasattr(response, "choices") and len(response.choices) > 0:
-            # Handle other response types with choices
-            message = response.choices[0].message
-            return {
-                "content": message.content,
-                "tool_calls": self._extract_tool_calls(message),
-                "role": message.role
             }
         else:
             # For cases where we can't easily format the response
@@ -225,48 +217,45 @@ class LLMClient:
             
     def _extract_tool_calls_from_litellm(self, response: ModelResponse) -> Optional[List[Dict[str, Any]]]:
         """Extract tool calls from a litellm ModelResponse."""
-        if not response or not hasattr(response, 'choices') or not response.choices:
-            return None
-            
-        # For streaming responses, the structure is different
-        if hasattr(response.choices[0], 'delta') and hasattr(response.choices[0].delta, 'tool_calls'):
-            tool_calls = []
-            delta_tool_calls = response.choices[0].delta.tool_calls
-            if delta_tool_calls:
+        # Let litellm handle the extraction of tool calls
+        try:
+            if not response or not hasattr(response, 'choices') or not response.choices:
+                return None
+                
+            # For streaming responses with delta
+            if hasattr(response.choices[0], 'delta') and hasattr(response.choices[0].delta, 'tool_calls'):
+                delta_tool_calls = response.choices[0].delta.tool_calls
+                if not delta_tool_calls:
+                    return None
+                    
+                tool_calls = []
                 for tc in delta_tool_calls:
                     if hasattr(tc, "function"):
                         tool_calls.append({
                             "name": tc.function.name if hasattr(tc.function, 'name') else "",
                             "arguments": json.loads(tc.function.arguments) if hasattr(tc.function, 'arguments') and isinstance(tc.function.arguments, str) else {}
                         })
-            return tool_calls if tool_calls else None
-            
-        # For non-streaming responses
-        if hasattr(response.choices[0], 'message') and hasattr(response.choices[0].message, 'tool_calls'):
-            message_tool_calls = response.choices[0].message.tool_calls
-            if not message_tool_calls:
-                return None
+                return tool_calls if tool_calls else None
                 
-            tool_calls = []
-            for tc in message_tool_calls:
-                if hasattr(tc, "function"):
-                    tool_calls.append({
-                        "name": tc.function.name,
-                        "arguments": json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments
-                    })
-            return tool_calls if tool_calls else None
-            
-        return None
-        
-    def _extract_tool_calls(self, message) -> Optional[List[Dict[str, Any]]]:
-        """Extract tool calls from a message object."""
-        if not hasattr(message, "tool_calls") or not message.tool_calls:
+            # For non-streaming responses with message
+            if hasattr(response.choices[0], 'message') and hasattr(response.choices[0].message, 'tool_calls'):
+                message_tool_calls = response.choices[0].message.tool_calls
+                if not message_tool_calls:
+                    return None
+                    
+                tool_calls = []
+                for tc in message_tool_calls:
+                    if hasattr(tc, "function"):
+                        tool_calls.append({
+                            "name": tc.function.name,
+                            "arguments": json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments
+                        })
+                return tool_calls if tool_calls else None
+                
             return None
-            
-        return [{
-            "name": tc.function.name,
-            "arguments": json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments
-        } for tc in message.tool_calls]
+        except Exception as e:
+            logger.error(f"Error extracting tool calls: {str(e)}")
+            return None
 
     def call_llm(
         self,

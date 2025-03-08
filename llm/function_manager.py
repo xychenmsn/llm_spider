@@ -136,34 +136,59 @@ class FunctionManager:
             logger.error(f"Error discovering functions: {str(e)}")
     
     def execute_function(self, function_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a function called by the LLM."""
-        logger.info(f"Executing function: {function_name} with args: {json.dumps(args)}")
+        """
+        Execute a function with the given arguments.
+        
+        Args:
+            function_name: The name of the function to execute
+            args: The arguments to pass to the function
+            
+        Returns:
+            The result of the function execution
+        """
+        function_class = self._functions.get(function_name)
+        if not function_class:
+            logger.error(f"Function {function_name} not found")
+            return {"error": f"Function {function_name} not found"}
         
         try:
-            # Get the function class from the registry
-            function_class = self.get_function(function_name)
-            if not function_class:
-                error_msg = f"Unknown function: {function_name}"
-                logger.error(error_msg)
-                return {"error": error_msg}
-            
-            # Create an instance of the function with the executor's context
+            # Create an instance of the function with the context
             function_instance = function_class(**self.context)
             
-            # Execute the function
-            result = function_instance.execute(args)
-            
-            # Log the result (truncate if too large)
-            result_str = json.dumps(result)
-            if len(result_str) > 500:
-                logger.info(f"Function result (truncated): {result_str[:500]}...")
-            else:
-                logger.info(f"Function result: {result_str}")
-                
-            return result
+            # Call the function with the arguments
+            return function_instance(**args)
         except Exception as e:
-            error_msg = f"Error executing function {function_name}: {str(e)}"
-            logger.error(error_msg)
+            logger.error(f"Error executing function {function_name}: {str(e)}")
+            return {"error": str(e)}
+    
+    @classmethod
+    def execute_tool_call(cls, tool_call: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Execute a tool call from an LLM.
+        
+        Args:
+            tool_call: The tool call from the LLM
+            context: Optional context to pass to the function
+            
+        Returns:
+            The result of the function execution
+        """
+        function_name = tool_call.get("name")
+        arguments = tool_call.get("arguments", {})
+        
+        function_class = cls._functions.get(function_name)
+        if not function_class:
+            logger.error(f"Function {function_name} not found")
+            return {"error": f"Function {function_name} not found"}
+        
+        try:
+            # Create an instance of the function with the context
+            function_instance = function_class(**(context or {}))
+            
+            # Call the function with the arguments
+            return function_instance(**arguments)
+        except Exception as e:
+            logger.error(f"Error executing function {function_name}: {str(e)}")
             return {"error": str(e)}
 
 

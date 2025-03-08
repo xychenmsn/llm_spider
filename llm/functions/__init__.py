@@ -15,6 +15,7 @@ from llm.function import Function
 from .fetch_webpage import FetchWebpage
 from .parse_with_parser import ParseWithParser
 from .test_function import TestFunction
+from .get_weather import GetWeather
 
 # Export all functions
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     'FetchWebpage',
     'ParseWithParser',
     'TestFunction',
+    'GetWeather',
 ] 

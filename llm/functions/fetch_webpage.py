@@ -9,6 +9,7 @@ This module provides a function to fetch the HTML content of a webpage.
 
 import logging
 from typing import Dict, Any
+from pydantic import BaseModel, Field
 
 from llm.function import Function
 
@@ -21,19 +22,17 @@ class FetchWebpage(Function):
     
     name = "fetch_webpage"
     description = "Fetch the HTML content of a webpage"
-    parameters = {
-        "url": {
-            "type": "string",
-            "description": "The URL of the webpage to fetch"
-        }
-    }
-    required_parameters = {"url"}
     
-    def execute(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    class InputModel(BaseModel):
+        """Input model for the fetch_webpage function."""
+        url: str = Field(
+            ..., 
+            description="The URL of the webpage to fetch"
+        )
+    
+    def execute(self, validated_input: InputModel) -> Dict[str, Any]:
         """Execute the function with the given arguments."""
-        url = args.get("url", "")
-        if not url:
-            return {"error": "URL is required"}
+        url = validated_input.url
         
         # Get the parser_designer from context
         parser_designer = self.context.get("parser_designer")
