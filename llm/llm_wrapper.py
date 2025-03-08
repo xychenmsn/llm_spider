@@ -17,7 +17,7 @@ from typing import List, Dict, Any, Optional, Generator, Union, Tuple
 
 from dotenv import load_dotenv
 import litellm
-from litellm.utils import ModelResponse
+from litellm.utils import ModelResponse, token_counter, get_max_tokens
 
 from .llm_client import LLMClient, LLMResponse, LLMProvider
 from .function_manager import get_function_schemas
@@ -108,6 +108,55 @@ class LLMWrapper:
         """
         return int(len(text) * self._tokens_per_char) + self._tokens_per_message
     
+    def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
+        """
+        Count tokens in a list of messages using litellm's token counter.
+        
+        Args:
+            messages: List of message dictionaries
+            
+        Returns:
+            Token count
+        """
+        try:
+            # Use litellm's token counter for accurate counting
+            count = token_counter(model=self.model, messages=messages)
+            logger.debug(f"Token count for messages: {count}")
+            return count
+        except Exception as e:
+            logger.warning(f"Error counting tokens with litellm: {str(e)}. Falling back to estimation.")
+            # Fall back to estimation if litellm counter fails
+            return sum(self._estimate_tokens(msg.get("content", "")) for msg in messages)
+    
+    def _get_max_tokens(self, model: str = None) -> int:
+        """
+        Get the maximum context length for a model.
+        
+        Args:
+            model: Model name (optional, uses self.model if not provided)
+            
+        Returns:
+            Maximum context length in tokens
+        """
+        model_to_check = model or self.model
+        try:
+            # Use litellm's get_max_tokens function
+            max_tokens = get_max_tokens(model_to_check)
+            logger.debug(f"Max tokens for {model_to_check}: {max_tokens}")
+            return max_tokens
+        except Exception as e:
+            logger.warning(f"Error getting max tokens for {model_to_check}: {str(e)}. Using default value.")
+            # Default values for common models if litellm fails
+            default_limits = {
+                "gpt-3.5-turbo": 4096,
+                "gpt-4": 8192,
+                "gpt-4-turbo": 128000,
+                "claude-3-opus-20240229": 200000,
+                "claude-3-sonnet-20240229": 180000
+            }
+            # Return default or conservative fallback
+            return default_limits.get(model_to_check, 4000)
+
     def _prepare_messages(self, user_input: str, focus_mode: bool = False) -> List[Dict[str, str]]:
         """
         Prepare messages for the LLM call, including system prompt and history.
@@ -122,9 +171,6 @@ class LLMWrapper:
         # Start with system prompt
         messages = [{"role": "system", "content": self.system_prompt}]
         
-        # Calculate tokens used by system prompt and current user input
-        system_tokens = self._estimate_tokens(self.system_prompt)
-        
         # Prepare user input - wrap in JSON if focus mode is enabled
         if focus_mode:
             focus_wrapper = {
@@ -135,30 +181,51 @@ class LLMWrapper:
             user_content = json.dumps(focus_wrapper)
         else:
             user_content = user_input
-            
-        user_tokens = self._estimate_tokens(user_content)
+        
+        # Create a copy of the current user message to calculate its tokens
+        current_user_message = {"role": "user", "content": user_content}
+        
+        # Count tokens for system prompt and current user message
+        system_and_user_messages = [messages[0], current_user_message]
+        system_and_user_tokens = self._count_tokens(system_and_user_messages)
         
         # Calculate remaining token budget for history
-        remaining_tokens = self.max_history_tokens - system_tokens - user_tokens
+        max_model_tokens = self._get_max_tokens()
+        remaining_tokens = min(self.max_history_tokens, max_model_tokens - system_and_user_tokens - 500)  # Reserve 500 tokens for response
+        
+        if remaining_tokens <= 0:
+            logger.warning(f"Not enough tokens for history. System and user message already use {system_and_user_tokens} tokens.")
+            # Just use system prompt and current user message
+            messages.append(current_user_message)
+            return messages
         
         # Add as much history as possible, prioritizing recent messages
         history_messages = []
         token_count = 0
         
+        # Create temporary messages to check token count
         for message in reversed(self.history):
-            msg_tokens = self._estimate_tokens(message["content"])
-            if token_count + msg_tokens <= remaining_tokens:
+            temp_messages = system_and_user_messages + history_messages + [message]
+            message_tokens = self._count_tokens(temp_messages) - system_and_user_tokens - token_count
+            
+            if token_count + message_tokens <= remaining_tokens:
                 history_messages.insert(0, message)
-                token_count += msg_tokens
+                token_count += message_tokens
             else:
                 break
                 
         messages.extend(history_messages)
         
         # Add current user message
-        messages.append({"role": "user", "content": user_content})
+        messages.append(current_user_message)
         
-        logger.info(f"Prepared {len(messages)} messages with approximately {system_tokens + token_count + user_tokens} tokens")
+        total_tokens = self._count_tokens(messages)
+        logger.info(f"Prepared {len(messages)} messages with {total_tokens} tokens")
+        
+        # Check if we're approaching the model's limit
+        if total_tokens > max_model_tokens * 0.9:  # 90% of max context
+            logger.warning(f"Input size approaching limit: {total_tokens}/{max_model_tokens}")
+        
         return messages
     
     def chat(
@@ -200,12 +267,23 @@ class LLMWrapper:
             else:
                 function_schemas = get_function_schemas()
         
+        # Check token count before sending
+        total_tokens = self._count_tokens(messages)
+        max_model_tokens = self._get_max_tokens(use_model)
+        
+        # Set up context window fallback if we're close to the limit
+        context_window_fallback_dict = None
+        if total_tokens > max_model_tokens * 0.9:  # 90% of max context
+            logger.warning(f"Using context window fallback due to large input: {total_tokens}/{max_model_tokens}")
+            context_window_fallback_dict = {"truncate_mode": "auto"}
+        
         # Call the LLM
         response = self.client.call_llm(
             messages=messages,
             stream=stream,
             function_schemas=function_schemas,
-            model=use_model
+            model=use_model,
+            context_window_fallback_dict=context_window_fallback_dict
         )
         
         # If streaming, we need to process the generator

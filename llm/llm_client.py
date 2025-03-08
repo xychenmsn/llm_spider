@@ -263,6 +263,7 @@ class LLMClient:
         stream: bool = True,
         function_schemas: Optional[List[Dict]] = None,
         model: Optional[str] = None,
+        context_window_fallback_dict: Optional[Dict[str, Any]] = None,
     ) -> Union[LLMResponse, Generator[str, None, LLMResponse]]:
         """Call the LLM with the given messages.
         
@@ -271,6 +272,7 @@ class LLMClient:
             stream: Whether to stream the response
             function_schemas: Optional list of function schemas for function calling
             model: Optional model override
+            context_window_fallback_dict: Optional dictionary for handling context window limits
             
         Returns:
             Either an LLMResponse object or a generator yielding content chunks and finally an LLMResponse
@@ -282,6 +284,7 @@ class LLMClient:
         logger.info(f"Stream mode: {stream}")
         logger.info(f"Number of messages: {len(messages)}")
         logger.info(f"Function schemas provided: {bool(function_schemas)}")
+        logger.info(f"Context window fallback provided: {bool(context_window_fallback_dict)}")
         
         # Log messages (excluding potentially sensitive system prompts)
         for msg in messages:
@@ -301,6 +304,11 @@ class LLMClient:
         if function_schemas:
             params["tools"] = function_schemas
             logger.info(f"Function schemas: {json.dumps(function_schemas, indent=2)}")
+            
+        # Add context window fallback if provided
+        if context_window_fallback_dict:
+            params["context_window_fallback_dict"] = context_window_fallback_dict
+            logger.info(f"Using context window fallback: {json.dumps(context_window_fallback_dict, indent=2)}")
 
         try:
             logger.info(f"Making LLM API call to {self.provider}...")
