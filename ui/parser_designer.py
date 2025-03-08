@@ -19,7 +19,7 @@ from PySide6.QtGui import QPixmap, QImage
 
 from ui.chat import ChatMessage, ChatHistory, ChatWidget
 from llm.worker import LLMWorker
-from llm.functions import FUNCTION_SCHEMAS, FunctionExecutor
+from llm.function_manager import FunctionManager, get_function_schemas
 from scraping.utils import fetch_webpage_html, parse_list_page, parse_content_page
 from db.models import URLParser
 from db.db_client import db_client
@@ -53,8 +53,8 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         # Pending parse request data
         self.pending_parse_url = None
         
-        # Set up function executor
-        self.function_executor = FunctionExecutor(self)
+        # Set up function manager
+        self.function_manager = FunctionManager(parser_designer=self)
         
         # Set up LLM worker in a separate thread
         self.worker_thread = QThread()
@@ -236,7 +236,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         self.receiving_chunks = False
         
         # Call LLM worker to get a response
-        self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=FUNCTION_SCHEMAS)
+        self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=get_function_schemas())
     
     def on_llm_response(self, response_message):
         """Handle the complete response from the LLM."""
@@ -300,7 +300,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Need to fetch HTML before parsing...</div>')
         
         # Execute the function
-        function_response = self.function_executor.execute_function(function_name, function_args)
+        function_response = self.function_manager.execute_function(function_name, function_args)
         
         # Add the function response to the chat history
         self.chat_widget.history.add_message(ChatMessage(
@@ -314,7 +314,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             return
         
         # Call the LLM again with the function response
-        self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=FUNCTION_SCHEMAS)
+        self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=get_function_schemas())
     
     def on_llm_error(self, error_message):
         """Handle an error from the LLM."""
@@ -455,7 +455,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             ))
         
         # Call the LLM again with the updated chat history
-        self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=FUNCTION_SCHEMAS)
+        self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=get_function_schemas())
     
     def _parse_with_parser(self, url: str, parser_config: Dict[str, Any]) -> Dict[str, Any]:
         """Parse a webpage using the LLM-generated parser."""

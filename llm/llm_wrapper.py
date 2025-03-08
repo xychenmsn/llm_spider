@@ -15,6 +15,7 @@ import logging
 from typing import List, Dict, Any, Optional, Generator, Union, Tuple
 
 from .llm_client import LLMClient, LLMResponse
+from .functions import get_function_schemas
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -40,7 +41,8 @@ class LLMWrapper:
         max_history_tokens: int = 4000,
         model: str = "gpt-4-turbo-preview",
         focus_mode: bool = False,
-        function_schemas: Optional[List[Dict]] = None
+        enable_functions: bool = False,
+        custom_function_schemas: Optional[List[Dict]] = None
     ):
         """
         Initialize the LLM wrapper.
@@ -51,7 +53,8 @@ class LLMWrapper:
             max_history_tokens: Maximum number of tokens to include from history
             model: The LLM model to use
             focus_mode: Whether to enable focus mode by default
-            function_schemas: Optional function schemas for tool use
+            enable_functions: Whether to enable function calling
+            custom_function_schemas: Optional custom function schemas to use instead of registered ones
         """
         self.system_prompt = system_prompt
         self.client = llm_client or LLMClient()
@@ -59,7 +62,8 @@ class LLMWrapper:
         self.model = model
         self.history: List[Dict[str, str]] = []
         self.focus_mode = focus_mode
-        self.function_schemas = function_schemas
+        self.enable_functions = enable_functions
+        self.custom_function_schemas = custom_function_schemas
         
         # Rough token estimation (this is approximate)
         self._tokens_per_message = 4  # Every message follows <im_start>{role/name}\n{content}<im_end>\n
@@ -67,7 +71,8 @@ class LLMWrapper:
         
         logger.info(f"LLMWrapper initialized with system prompt: {system_prompt[:50]}...")
         logger.info(f"Focus mode: {focus_mode}")
-        logger.info(f"Function schemas provided: {bool(function_schemas)}")
+        logger.info(f"Function calling enabled: {enable_functions}")
+        logger.info(f"Custom function schemas provided: {bool(custom_function_schemas)}")
         
     def _estimate_tokens(self, text: str) -> int:
         """
@@ -140,7 +145,8 @@ class LLMWrapper:
         user_input: str, 
         focus_mode: Optional[bool] = None,
         stream: bool = True,
-        function_schemas: Optional[List[Dict]] = None
+        enable_functions: Optional[bool] = None,
+        custom_function_schemas: Optional[List[Dict]] = None
     ) -> Union[LLMResponse, Generator[str, None, LLMResponse]]:
         """
         Send a message to the LLM and get a response.
@@ -149,24 +155,32 @@ class LLMWrapper:
             user_input: The user's input message
             focus_mode: Whether to use focus mode (overrides the instance setting if provided)
             stream: Whether to stream the response
-            function_schemas: Optional function schemas for tool use (overrides the instance setting if provided)
+            enable_functions: Whether to enable function calling (overrides the instance setting if provided)
+            custom_function_schemas: Optional custom function schemas (overrides the instance setting if provided)
             
         Returns:
             LLM response or generator
         """
-        # Use provided focus_mode if given, otherwise use instance setting
+        # Use provided settings if given, otherwise use instance settings
         use_focus_mode = self.focus_mode if focus_mode is None else focus_mode
-        
-        # Use provided function_schemas if given, otherwise use instance setting
-        use_function_schemas = function_schemas if function_schemas is not None else self.function_schemas
+        use_enable_functions = self.enable_functions if enable_functions is None else enable_functions
+        use_custom_schemas = custom_function_schemas if custom_function_schemas is not None else self.custom_function_schemas
         
         messages = self._prepare_messages(user_input, use_focus_mode)
+        
+        # Determine which function schemas to use
+        function_schemas = None
+        if use_enable_functions:
+            if use_custom_schemas:
+                function_schemas = use_custom_schemas
+            else:
+                function_schemas = get_function_schemas()
         
         # Call the LLM
         response = self.client.call_llm(
             messages=messages,
             stream=stream,
-            function_schemas=use_function_schemas,
+            function_schemas=function_schemas,
             model=self.model
         )
         

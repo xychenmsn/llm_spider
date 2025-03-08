@@ -11,7 +11,7 @@ This module provides a UI for designing URL parsers with LLM assistance.
 from ui.parser_designer import ParserDesignerWindow, NewParserDialog
 from ui.chat import ChatMessage, ChatHistory, ChatWidget
 from llm.worker import LLMWorker
-from llm.functions import FUNCTION_SCHEMAS, FunctionExecutor
+from llm.function_manager import FunctionManager, get_function_schemas
 from scraping.utils import fetch_webpage_html, parse_list_page, parse_content_page
 
 # This file is kept for backward compatibility

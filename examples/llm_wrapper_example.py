@@ -8,6 +8,7 @@ Example script demonstrating the use of the LLMWrapper class.
 import os
 import sys
 import logging
+from typing import Dict, Any
 from dotenv import load_dotenv
 
 # Add the parent directory to the path so we can import the llm module
@@ -15,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from llm.llm_client import LLMClient
 from llm.llm_wrapper import LLMWrapper
+from llm.function import Function
 
 # Set up logging
 logging.basicConfig(
@@ -26,6 +28,38 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+# Define a custom function for the example
+class SearchPythonDocs(Function):
+    """Function to search Python documentation."""
+    
+    name = "search_python_docs"
+    description = "Search the Python documentation for information"
+    parameters = {
+        "query": {
+            "type": "string",
+            "description": "The search query"
+        }
+    }
+    required_parameters = {"query"}
+    
+    def execute(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the function with the given arguments."""
+        query = args.get("query", "")
+        if not query:
+            return {"error": "Query is required"}
+        
+        # In a real implementation, this would search the Python docs
+        # For this example, we'll just return a mock response
+        return {
+            "results": [
+                {
+                    "title": f"Python documentation for: {query}",
+                    "url": f"https://docs.python.org/3/search.html?q={query}",
+                    "summary": f"This is a mock result for the query: {query}"
+                }
+            ]
+        }
+
 def main():
     """Run the example."""
     # Define a system prompt
@@ -36,34 +70,13 @@ def main():
     back to Python-related topics.
     """
     
-    # Define function schemas for tool use
-    function_schemas = [
-        {
-            "type": "function",
-            "function": {
-                "name": "search_python_docs",
-                "description": "Search the Python documentation for information",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query"
-                        }
-                    },
-                    "required": ["query"]
-                }
-            }
-        }
-    ]
-    
     # Create the LLM wrapper with focus mode enabled by default
     wrapper = LLMWrapper(
         system_prompt=system_prompt,
         max_history_tokens=2000,
         model="gpt-4-turbo-preview",
         focus_mode=True,  # Enable focus mode by default
-        function_schemas=function_schemas  # Set function schemas in constructor
+        enable_functions=True  # Enable function calling
     )
     
     print("\n=== LLM Wrapper Example ===")
@@ -101,7 +114,8 @@ def main():
             response_stream = wrapper.chat(
                 user_input=user_input,
                 focus_mode=focus_mode,  # Override the default focus mode if needed
-                stream=True
+                stream=True,
+                enable_functions=True  # Enable function calling for this request
             )
             
             # Process the stream

@@ -16,6 +16,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from llm.llm_client import LLMClient, LLMResponse
 from llm.llm_wrapper import LLMWrapper
+from llm.function import Function
+from llm.function_manager import FunctionManager
 
 class TestLLMWrapper(unittest.TestCase):
     """Test cases for the LLMWrapper class."""
@@ -24,7 +26,7 @@ class TestLLMWrapper(unittest.TestCase):
         """Set up test fixtures."""
         self.system_prompt = "You are a test assistant."
         self.mock_client = MagicMock(spec=LLMClient)
-        self.function_schemas = [
+        self.custom_function_schemas = [
             {
                 "type": "function",
                 "function": {
@@ -49,7 +51,8 @@ class TestLLMWrapper(unittest.TestCase):
             max_history_tokens=1000,
             model="test-model",
             focus_mode=True,
-            function_schemas=self.function_schemas
+            enable_functions=True,
+            custom_function_schemas=self.custom_function_schemas
         )
     
     def test_init(self):
@@ -59,7 +62,8 @@ class TestLLMWrapper(unittest.TestCase):
         self.assertEqual(self.wrapper.max_history_tokens, 1000)
         self.assertEqual(self.wrapper.history, [])
         self.assertTrue(self.wrapper.focus_mode)
-        self.assertEqual(self.wrapper.function_schemas, self.function_schemas)
+        self.assertTrue(self.wrapper.enable_functions)
+        self.assertEqual(self.wrapper.custom_function_schemas, self.custom_function_schemas)
     
     def test_estimate_tokens(self):
         """Test token estimation."""
@@ -166,20 +170,22 @@ class TestLLMWrapper(unittest.TestCase):
         self.assertIsNot(result, self.wrapper.history)
 
     @patch('llm.llm_client.LLMClient.call_llm')
-    def test_chat_with_constructor_settings(self, mock_call_llm):
+    @patch('llm.functions.get_function_schemas')
+    def test_chat_with_constructor_settings(self, mock_get_schemas, mock_call_llm):
         """Test chat method using constructor settings."""
-        # Set up the mock
+        # Set up the mocks
         mock_response = LLMResponse(content="Test response")
         mock_call_llm.return_value = mock_response
+        mock_get_schemas.return_value = [{"type": "function", "function": {"name": "registered_function"}}]
         
-        # Call the method without overriding focus_mode or function_schemas
+        # Call the method without overriding focus_mode or enable_functions
         response = self.wrapper.chat("Test input", stream=False)
         
         # Verify the call used the constructor settings
         mock_call_llm.assert_called_once()
         call_args = mock_call_llm.call_args[1]
         self.assertEqual(call_args["model"], "test-model")
-        self.assertEqual(call_args["function_schemas"], self.function_schemas)
+        self.assertEqual(call_args["function_schemas"], self.custom_function_schemas)
         
         # Verify the messages were prepared with focus mode
         messages = call_args["messages"]
@@ -193,20 +199,24 @@ class TestLLMWrapper(unittest.TestCase):
             self.fail("User message content is not valid JSON (focus mode not applied)")
 
     @patch('llm.llm_client.LLMClient.call_llm')
-    def test_chat_override_constructor_settings(self, mock_call_llm):
+    @patch('llm.functions.get_function_schemas')
+    def test_chat_override_constructor_settings(self, mock_get_schemas, mock_call_llm):
         """Test chat method overriding constructor settings."""
-        # Set up the mock
+        # Set up the mocks
         mock_response = LLMResponse(content="Test response")
         mock_call_llm.return_value = mock_response
+        registered_schemas = [{"type": "function", "function": {"name": "registered_function"}}]
+        mock_get_schemas.return_value = registered_schemas
         
         # Override function schemas
         new_schemas = [{"type": "function", "function": {"name": "new_function"}}]
         
-        # Call the method with overridden focus_mode and function_schemas
+        # Call the method with overridden focus_mode and custom_function_schemas
         response = self.wrapper.chat(
             "Test input", 
             focus_mode=False,  # Override constructor setting
-            function_schemas=new_schemas,  # Override constructor setting
+            enable_functions=True,  # Keep functions enabled
+            custom_function_schemas=new_schemas,  # Override constructor setting
             stream=False
         )
         
@@ -220,6 +230,34 @@ class TestLLMWrapper(unittest.TestCase):
         user_message = messages[-1]
         self.assertEqual(user_message["role"], "user")
         self.assertEqual(user_message["content"], "Test input")  # Not JSON wrapped
+        
+    @patch('llm.llm_client.LLMClient.call_llm')
+    @patch('llm.functions.get_function_schemas')
+    def test_chat_with_registered_functions(self, mock_get_schemas, mock_call_llm):
+        """Test chat method using registered functions instead of custom schemas."""
+        # Set up the mocks
+        mock_response = LLMResponse(content="Test response")
+        mock_call_llm.return_value = mock_response
+        registered_schemas = [{"type": "function", "function": {"name": "registered_function"}}]
+        mock_get_schemas.return_value = registered_schemas
+        
+        # Create a wrapper without custom schemas
+        wrapper = LLMWrapper(
+            system_prompt=self.system_prompt,
+            llm_client=self.mock_client,
+            model="test-model",
+            enable_functions=True,
+            custom_function_schemas=None  # No custom schemas
+        )
+        
+        # Call the chat method
+        response = wrapper.chat("Test input", stream=False)
+        
+        # Verify registered schemas were used
+        mock_call_llm.assert_called_once()
+        call_args = mock_call_llm.call_args[1]
+        self.assertEqual(call_args["function_schemas"], registered_schemas)
+        mock_get_schemas.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main() 
