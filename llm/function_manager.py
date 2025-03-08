@@ -193,6 +193,44 @@ class FunctionManager:
 
 
 # Function to get all function schemas for LLM function calling
-def get_function_schemas() -> List[Dict[str, Any]]:
-    """Get schemas for all registered functions."""
-    return FunctionManager.get_all_schemas() 
+def get_function_schemas() -> List[Dict]:
+    """Get all registered function schemas."""
+    schemas = []
+    
+    # Add all registered functions
+    for func in FunctionManager.get_all_functions():
+        schema = {
+            "type": "function",
+            "function": {
+                "name": func.name,
+                "description": func.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": func.parameters,
+                    "required": list(func.required_parameters)
+                }
+            }
+        }
+        schemas.append(schema)
+        
+    # Add memory retrieval function
+    schemas.append({
+        "type": "function",
+        "function": {
+            "name": "get_memory",
+            "description": "Retrieve stored data from memory",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of keys to retrieve from memory"
+                    }
+                },
+                "required": ["keys"]
+            }
+        }
+    })
+    
+    return schemas 
