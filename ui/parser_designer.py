@@ -23,6 +23,7 @@ from llm.function_manager import FunctionManager, get_function_schemas
 from scraping.utils import fetch_webpage_html, parse_list_page, parse_content_page
 from db.models import URLParser
 from db.db_client import db_client
+from llm.prompts.system_prompts import URL_PARSER_STATE_MACHINE_PROMPT
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -180,17 +181,8 @@ class ParserDesignerWindow(QtWidgets.QDialog):
     
     def _initialize_chat(self):
         """Initialize the chat with a system prompt."""
-        system_prompt = (
-            "You are an AI assistant helping to design a URL parser. "
-            "Your goal is to help the user create a parser that can extract relevant information from URLs. "
-            "You can suggest CSS selectors, parsing strategies, and help with implementation details. "
-            "Be specific and provide code examples when appropriate. "
-            "You have access to functions that can fetch webpage content and parse webpages using your generated parser configurations."
-            "\n\nYou should directly generate parser configurations based on the webpage content. "
-            "A parser configuration should include a 'type' field ('list' or 'content') and appropriate selectors. "
-            "For list parsers, include 'selector' and 'attribute' fields. "
-            "For content parsers, include 'title_selector', 'date_selector', and 'body_selector' fields."
-        )
+        # Use the state machine prompt
+        system_prompt = URL_PARSER_STATE_MACHINE_PROMPT
         
         if self.parser:
             # Add parser-specific context
