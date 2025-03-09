@@ -217,41 +217,96 @@ class LLMClient:
             
     def _extract_tool_calls_from_litellm(self, response: ModelResponse) -> Optional[List[Dict[str, Any]]]:
         """Extract tool calls from a litellm ModelResponse."""
-        # Let litellm handle the extraction of tool calls
         try:
             if not response or not hasattr(response, 'choices') or not response.choices:
                 return None
-                
+            
+            choice = response.choices[0]
+            
             # For streaming responses with delta
-            if hasattr(response.choices[0], 'delta') and hasattr(response.choices[0].delta, 'tool_calls'):
-                delta_tool_calls = response.choices[0].delta.tool_calls
+            if hasattr(choice, 'delta'):
+                if not hasattr(choice.delta, 'tool_calls'):
+                    return None
+                
+                delta_tool_calls = choice.delta.tool_calls
                 if not delta_tool_calls:
                     return None
-                    
+                
                 tool_calls = []
                 for tc in delta_tool_calls:
                     if hasattr(tc, "function"):
-                        tool_calls.append({
-                            "name": tc.function.name if hasattr(tc.function, 'name') else "",
-                            "arguments": json.loads(tc.function.arguments) if hasattr(tc.function, 'arguments') and isinstance(tc.function.arguments, str) else {}
-                        })
+                        try:
+                            # Get the function name
+                            name = tc.function.name if hasattr(tc.function, 'name') else None
+                            
+                            # Get the arguments
+                            args = tc.function.arguments
+                            if isinstance(args, str):
+                                # Try to parse as JSON first
+                                try:
+                                    args = json.loads(args)
+                                except json.JSONDecodeError:
+                                    # If it's a raw string, try to extract key-value pairs
+                                    if ':' in args:
+                                        try:
+                                            key, value = args.split(':', 1)
+                                            args = {key.strip(): value.strip()}
+                                        except ValueError:
+                                            args = {"url": args.strip()}
+                                    else:
+                                        args = {"url": args.strip()}
+                            
+                            tool_calls.append({
+                                "name": name,
+                                "arguments": args
+                            })
+                        except Exception as e:
+                            logger.error(f"Error extracting tool call from delta: {str(e)}")
+                            continue
                 return tool_calls if tool_calls else None
-                
+            
             # For non-streaming responses with message
-            if hasattr(response.choices[0], 'message') and hasattr(response.choices[0].message, 'tool_calls'):
-                message_tool_calls = response.choices[0].message.tool_calls
+            if hasattr(choice, 'message'):
+                if not hasattr(choice.message, 'tool_calls'):
+                    return None
+                
+                message_tool_calls = choice.message.tool_calls
                 if not message_tool_calls:
                     return None
-                    
+                
                 tool_calls = []
                 for tc in message_tool_calls:
                     if hasattr(tc, "function"):
-                        tool_calls.append({
-                            "name": tc.function.name,
-                            "arguments": json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments
-                        })
+                        try:
+                            # Get the function name
+                            name = tc.function.name if hasattr(tc.function, 'name') else None
+                            
+                            # Get the arguments
+                            args = tc.function.arguments
+                            if isinstance(args, str):
+                                # Try to parse as JSON first
+                                try:
+                                    args = json.loads(args)
+                                except json.JSONDecodeError:
+                                    # If it's a raw string, try to extract key-value pairs
+                                    if ':' in args:
+                                        try:
+                                            key, value = args.split(':', 1)
+                                            args = {key.strip(): value.strip()}
+                                        except ValueError:
+                                            args = {"url": args.strip()}
+                                    else:
+                                        args = {"url": args.strip()}
+                            
+                            tool_calls.append({
+                                "name": name,
+                                "arguments": args
+                            })
+                        except Exception as e:
+                            logger.error(f"Error extracting tool call from message: {str(e)}")
+                            continue
                 return tool_calls if tool_calls else None
-                
+            
             return None
         except Exception as e:
             logger.error(f"Error extracting tool calls: {str(e)}")

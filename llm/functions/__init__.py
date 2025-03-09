@@ -16,6 +16,7 @@ from .fetch_webpage import FetchWebpage
 from .parse_with_parser import ParseWithParser
 from .test_function import TestFunction
 from .get_weather import GetWeather
+from .parse_webpage import ParseWebpage
 
 # Export all functions
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     'ParseWithParser',
     'TestFunction',
     'GetWeather',
+    'ParseWebpage',
 ] 

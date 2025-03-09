@@ -198,21 +198,13 @@ def get_function_schemas() -> List[Dict]:
     schemas = []
     
     # Add all registered functions
-    for func in FunctionManager.get_all_functions():
-        schema = {
-            "type": "function",
-            "function": {
-                "name": func.name,
-                "description": func.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": func.parameters,
-                    "required": list(func.required_parameters)
-                }
-            }
-        }
-        schemas.append(schema)
-        
+    for func_name, func_class in FunctionManager.get_all_functions().items():
+        try:
+            schema = func_class.get_schema()
+            schemas.append(schema)
+        except Exception as e:
+            logger.error(f"Error getting schema for function {func_name}: {str(e)}")
+    
     # Add memory retrieval function
     schemas.append({
         "type": "function",

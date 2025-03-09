@@ -261,23 +261,6 @@ Memory Operations:
 3. Validate memory:
    <mem_validate>["key1", "key2"]</mem_validate>
 
-Example Flow:
-User: "Parse this URL: example.com"
-You: <state>S1</state>
-<mem_validate>[]</mem_validate>
-<mem_set>{"url": "example.com"}</mem_set>
-Moving to fetch HTML...
-
-User: "What's happening?"
-You: <state>S2</state>
-<mem_validate>["url"]</mem_validate>
-Currently fetching HTML from example.com
-Options:
-1. Wait for fetch to complete
-2. Retry fetch
-3. Try different URL
-4. See all commands
-
 Memory Keys by State:
 S1: url (optional)
 S2: url, html (required)

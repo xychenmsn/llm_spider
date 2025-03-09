@@ -8,6 +8,7 @@ This module provides the ChatWidget class for displaying and interacting with th
 """
 
 from datetime import datetime
+import os
 
 from PySide6 import QtWidgets, QtCore, QtGui
 from PySide6.QtCore import Qt, Signal
@@ -28,8 +29,38 @@ class ChatWidget(QtWidgets.QWidget):
         self.is_processing = False
         self.current_streaming_message = ""
         self.is_streaming = False
+        self.log_file = None
         self.setup_ui()
+        self._setup_logging()
         
+    def _setup_logging(self):
+        """Set up logging for the chat content."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_dir = "tmp/parser_designer_log"
+        os.makedirs(log_dir, exist_ok=True)
+        self.log_file = os.path.join(log_dir, f"chat_{timestamp}.txt")
+    
+    def _log_content(self, content: str):
+        """Log content to the log file."""
+        if self.log_file:
+            try:
+                timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
+                with open(self.log_file, 'a') as f:
+                    f.write(f"{timestamp}{content}\n")
+            except Exception:
+                # Silently fail if we can't write to the log file
+                pass
+    
+    def _get_chat_content(self) -> str:
+        """Get the current chat content in a format suitable for logging."""
+        try:
+            content = self.chat_display.toPlainText()
+            # Add horizontal line between messages for better readability
+            content = content.replace("\n(", "\n" + "-"*80 + "\n(")
+            return content
+        except Exception:
+            return "=== Chat content unavailable ==="
+    
     def setup_ui(self):
         """Set up the UI components."""
         layout = QtWidgets.QVBoxLayout(self)
@@ -287,4 +318,9 @@ class ChatWidget(QtWidgets.QWidget):
         self.chat_display.repaint()
         self.chat_display.verticalScrollBar().setValue(
             self.chat_display.verticalScrollBar().maximum()
-        ) 
+        )
+    
+    def __del__(self):
+        """Clean up when the widget is destroyed."""
+        # No longer need to log here as it's handled in the ParserDesignerWindow
+        pass 

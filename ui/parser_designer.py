@@ -35,6 +35,16 @@ class ParserDesignerWindow(QtWidgets.QDialog):
     # Signal to notify when a parser is saved
     parser_saved = QtCore.Signal()
     
+    # State constants (kept for reference but state transitions handled by LLM)
+    STATE_WAITING_FOR_URL = "S1"
+    STATE_FETCHING_HTML = "S2"
+    STATE_ANALYZING_CONTENT = "S3"
+    STATE_CONFIRMING_EXTRACTION = "S4"
+    STATE_CREATING_PARSER = "S5"
+    STATE_TESTING_PARSER = "S6"
+    STATE_FINAL_CONFIRMATION = "S7"
+    STATE_RECOVERY = "RECOVERY"
+    
     def __init__(self, parent=None, parser_id=None, url=None):
         super().__init__(parent)
         
@@ -45,6 +55,11 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         self.parser = None
         self.chat_history = ChatHistory()
         self.url = url
+        
+        # State and memory management (now controlled by LLM)
+        self.current_state = self.STATE_WAITING_FOR_URL
+        self.memory = {}
+        self.memory_history = []
         
         # Parser data
         self.html_content = None
@@ -85,6 +100,10 @@ class ParserDesignerWindow(QtWidgets.QDialog):
                     
                     if "chat_history" in chat_data:
                         self.chat_history = ChatHistory.from_dict(chat_data["chat_history"])
+                    if "memory" in chat_data:
+                        self.memory = chat_data["memory"]
+                    if "state" in chat_data:
+                        self.current_state = chat_data["state"]
                 except Exception as e:
                     logger.error(f"Failed to load chat history: {str(e)}")
         
@@ -188,6 +207,25 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             # Add parser-specific context
             system_prompt += f"\n\nYou are currently editing the parser named '{self.parser.name}' "
             system_prompt += f"with URL pattern: {self.parser.url_pattern}"
+            
+            # Load parser data into memory
+            try:
+                parser_data = json.loads(self.parser.parser)
+                self.parser_config = parser_data.get("config", {})
+                self.memory.update({
+                    "url": self.parser.url_pattern,
+                    "parser_code": self.parser_config,
+                    "parser_type": parser_data.get("type", "custom_parser")
+                })
+                
+                # If we have a URL, try to fetch HTML and analyze
+                if self.url:
+                    self._handle_state_transition(self.STATE_FETCHING_HTML)
+                else:
+                    self._handle_state_transition(self.STATE_CREATING_PARSER)
+            except json.JSONDecodeError:
+                logger.error("Failed to load parser data")
+                self._handle_state_transition(self.STATE_RECOVERY)
         
         self.chat_widget.set_system_prompt(system_prompt)
         
@@ -199,10 +237,16 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             )
             self.chat_widget.receive_message(initial_message)
             
+            # Store URL in memory
+            self.memory["url"] = self.url
+            
             # Send a message to trigger the parsing process
             parse_message = f"Try to parse this URL: {self.url}"
             self.chat_widget.display_message(ChatMessage(ChatMessage.ROLE_USER, parse_message))
             self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_USER, parse_message))
+            
+            # Transition to fetching HTML state
+            self._handle_state_transition(self.STATE_FETCHING_HTML)
             
             # Use a timer to delay the LLM call until after the window is displayed
             QtCore.QTimer.singleShot(100, lambda: self.on_message_sent(parse_message))
@@ -215,7 +259,100 @@ class ParserDesignerWindow(QtWidgets.QDialog):
                 "I'll directly generate parser configurations based on the webpage content."
             )
             self.chat_widget.receive_message(welcome_message)
+            
+            # Start in waiting for URL state
+            self._handle_state_transition(self.STATE_WAITING_FOR_URL)
     
+    def _process_memory_operations(self, content: str) -> tuple[str, bool]:
+        """Process memory operations in LLM response."""
+        has_memory_ops = False
+        
+        # Process memory set operations
+        while "<mem_set>" in content and "</mem_set>" in content:
+            has_memory_ops = True
+            start = content.find("<mem_set>")
+            end = content.find("</mem_set>") + len("</mem_set>")
+            mem_op = content[start:end]
+            try:
+                mem_data = json.loads(mem_op[9:-10])  # Extract JSON between tags
+                self.memory.update(mem_data)
+                self.memory_history.append(("set", mem_data))
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse memory operation: {str(e)}")
+            content = content[:start] + content[end:]
+        
+        # Process memory get operations
+        while "<mem_get>" in content and "</mem_get>" in content:
+            has_memory_ops = True
+            start = content.find("<mem_get>")
+            end = content.find("</mem_get>") + len("</mem_get>")
+            mem_op = content[start:end]
+            key = mem_op[9:-10].strip()  # Extract key between tags
+            if key == "all":
+                value = json.dumps(self.memory, indent=2)
+            else:
+                value = str(self.memory.get(key, ""))
+            content = content[:start] + value + content[end:]
+        
+        # Process memory validation
+        while "<mem_validate>" in content and "</mem_validate>" in content:
+            has_memory_ops = True
+            start = content.find("<mem_validate>")
+            end = content.find("</mem_validate>") + len("</mem_validate>")
+            mem_op = content[start:end]
+            try:
+                required_keys = json.loads(mem_op[13:-14])  # Extract keys between tags
+                missing_keys = [key for key in required_keys if key not in self.memory]
+                if missing_keys:
+                    content = content[:start] + f"Missing required memory: {', '.join(missing_keys)}" + content[end:]
+                else:
+                    content = content[:start] + "Memory validation passed" + content[end:]
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse memory validation: {str(e)}")
+            content = content[:start] + content[end:]
+        
+        # Process state changes
+        while "<state>" in content and "</state>" in content:
+            has_memory_ops = True
+            start = content.find("<state>")
+            end = content.find("</state>") + len("</state>")
+            state_op = content[start:end]
+            new_state = state_op[7:-8].strip()  # Extract state between tags
+            if new_state != self.current_state:
+                self.current_state = new_state
+                self.memory_history.append(("state_change", new_state))
+            content = content[:start] + f"[State: {new_state}]" + content[end:]
+        
+        return content, has_memory_ops
+
+    def _validate_state_transition(self, new_state: str) -> bool:
+        """Validate if a state transition is allowed based on memory requirements."""
+        state_memory_requirements = {
+            self.STATE_WAITING_FOR_URL: [],
+            self.STATE_FETCHING_HTML: ["url"],
+            self.STATE_ANALYZING_CONTENT: ["html"],
+            self.STATE_CONFIRMING_EXTRACTION: ["title", "date", "body"],
+            self.STATE_CREATING_PARSER: ["html", "title", "date", "body"],
+            self.STATE_TESTING_PARSER: ["html", "parser_code"],
+            self.STATE_FINAL_CONFIRMATION: ["parsing_result"]
+        }
+        
+        if new_state not in state_memory_requirements:
+            return True  # Allow transitions to states without requirements (like RECOVERY)
+        
+        required_keys = state_memory_requirements[new_state]
+        return all(key in self.memory for key in required_keys)
+
+    def _handle_state_transition(self, new_state: str) -> bool:
+        """Handle state transition with validation and recovery."""
+        if not self._validate_state_transition(new_state):
+            logger.warning(f"Invalid state transition to {new_state} - missing required memory")
+            self.current_state = self.STATE_RECOVERY
+            return False
+        
+        self.current_state = new_state
+        return True
+
     def on_message_sent(self, message: str):
         """Handle a message sent by the user."""
         # Set the chat widget to processing state
@@ -227,50 +364,37 @@ class ParserDesignerWindow(QtWidgets.QDialog):
         # Track if we're receiving streaming chunks
         self.receiving_chunks = False
         
+        # Add state information to the message history
+        state_message = f"<state>{self.current_state}</state>\n{message}"
+        self.chat_widget.history.add_message(ChatMessage(ChatMessage.ROLE_USER, state_message))
+        
         # Call LLM worker to get a response
         self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=get_function_schemas())
     
-    def on_llm_response(self, response_message):
-        """Handle the complete response from the LLM."""
-        # Remove the "typing" indicator
-        self.chat_widget._remove_typing_indicator()
+    def on_llm_response(self, response):
+        """Handle LLM response."""
+        # Process memory operations and state changes
+        content, has_memory_ops = self._process_memory_operations(response.content)
         
-        # If we've been receiving chunks, don't display the final message again
-        # Just add it to the history
-        if hasattr(self, 'receiving_chunks') and self.receiving_chunks:
-            # Just add the message to history without displaying it again
-            if response_message and hasattr(response_message, 'content') and response_message.content:
-                # Finalize the streaming message with the complete content
-                self.chat_widget.finalize_streaming_message(response_message.content)
-                
-                # Add the message to history
-                self.chat_widget.history.add_message(ChatMessage(
-                    ChatMessage.ROLE_ASSISTANT,
-                    response_message.content
-                ))
-                
-                # Reset streaming state
-                self.receiving_chunks = False
-            return
+        # Display processed response
+        self.chat_widget.receive_message(content)
         
-        # If there's content, display it
-        if response_message and hasattr(response_message, 'content') and response_message.content:
-            self.chat_widget.receive_message(response_message.content)
-            
-            # Add the assistant's message to the chat history
-            self.chat_widget.history.add_message(ChatMessage(
-                ChatMessage.ROLE_ASSISTANT,
-                response_message.content
-            ))
-        elif not hasattr(response_message, 'tool_calls') or not response_message.tool_calls:
-            # If there's no content and no tool calls, show a generic message
-            self.chat_widget.receive_message("I'm processing your request...")
-            
-            # Add the generic message to the chat history
-            self.chat_widget.history.add_message(ChatMessage(
-                ChatMessage.ROLE_ASSISTANT,
-                "I'm processing your request..."
-            ))
+        # Update UI based on current state
+        self._update_ui_for_state()
+    
+    def _update_ui_for_state(self):
+        """Update UI elements based on current state."""
+        # Enable/disable UI elements based on state
+        url_enabled = self.current_state in [self.STATE_WAITING_FOR_URL]
+        self.url_input.setEnabled(url_enabled)
+        self.browser_button.setEnabled(url_enabled)
+        
+        # Update save button state
+        can_save = self.current_state == self.STATE_FINAL_CONFIRMATION
+        self.save_button.setEnabled(can_save)
+        
+        # Update window title with current state
+        self.setWindowTitle(f"Parser Designer - {self.current_state}")
     
     def on_llm_chunk(self, chunk):
         """Handle a chunk of the response from the LLM."""
@@ -282,16 +406,11 @@ class ParserDesignerWindow(QtWidgets.QDialog):
     
     def on_function_call(self, function_name, function_args):
         """Handle a function call from the LLM."""
-        # Execute the function
-        if function_name == "parse_with_parser" and not self.html_content:
-            # Store the URL and parser config for later use
-            self.pending_parse_url = function_args.get("url", self.url)
-            self.parser_config = function_args.get("parser_config", {})
-            
-            # Add a message to the chat
-            self.chat_widget.chat_display.append('<div style="color: #666666; font-style: italic;">Need to fetch HTML before parsing...</div>')
+        # Add state information to function arguments
+        if function_name == "parse_webpage":
+            function_args["state"] = self.current_state
         
-        # Execute the function
+        # Execute the function through the function manager
         function_response = self.function_manager.execute_function(function_name, function_args)
         
         # Add the function response to the chat history
@@ -300,12 +419,43 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             f"Function {function_name} returned: {json.dumps(function_response)}"
         ))
         
-        # If the function is fetching a webpage, we'll get the response asynchronously
-        # so we don't need to call the LLM again right now
-        if function_name == "fetch_webpage":
-            return
+        # Handle state transitions and memory updates based on function response
+        if function_name == "parse_webpage":
+            if "error" in function_response:
+                # Handle error by transitioning to recovery state
+                self._handle_state_transition(self.STATE_RECOVERY)
+                self.chat_widget.chat_display.append(
+                    f'<div style="color: red; padding: 10px; border-radius: 5px; margin: 10px 0;">'
+                    f'Error: {function_response["error"]}</div>'
+                )
+            elif "status" in function_response and function_response["status"] == "success":
+                # Display success message if provided
+                if "message" in function_response:
+                    self.chat_widget.chat_display.append(
+                        f'<div style="color: #008800; font-style: italic;">'
+                        f'{function_response["message"]}</div>'
+                    )
+                
+                # Handle HTML preview if available
+                if "html_preview" in function_response:
+                    self.chat_widget.chat_display.append(
+                        f'<div style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0;">'
+                        f'<p><strong>HTML Content Preview:</strong></p>'
+                        f'<pre style="white-space: pre-wrap;">{function_response["html_preview"]}</pre>'
+                        f'<p>Total length: {function_response.get("html_length", 0)} characters</p>'
+                        f'</div>'
+                    )
+                
+                # Handle parsing results if available
+                if "parsing_result" in function_response:
+                    self.chat_widget.chat_display.append(
+                        f'<div style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0;">'
+                        f'<p><strong>Parsing Result:</strong></p>'
+                        f'<pre style="white-space: pre-wrap;">{json.dumps(function_response["parsing_result"], indent=2)}</pre>'
+                        f'</div>'
+                    )
         
-        # Call the LLM again with the function response
+        # Call the LLM again with the updated chat history
         self.llm_worker.call_llm(self.chat_widget.history.get_openai_messages(), function_schemas=get_function_schemas())
     
     def on_llm_error(self, error_message):
@@ -590,6 +740,14 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             "url": self.url
         }
         
+        # Prepare chat data with state and memory
+        chat_data = {
+            "chat_history": self.chat_widget.history.to_dict(),
+            "memory": self.memory,
+            "state": self.current_state,
+            "memory_history": self.memory_history
+        }
+        
         if not self.parser:
             # Create a new parser
             self.parser = URLParser(
@@ -597,7 +755,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
                 url_pattern=url_pattern,
                 parser=json.dumps(parser_data),
                 meta_data=meta_data,
-                chat_data={"chat_history": self.chat_widget.history.to_dict()}
+                chat_data=chat_data
             )
             
             try:
@@ -623,7 +781,7 @@ class ParserDesignerWindow(QtWidgets.QDialog):
             self.parser.url_pattern = url_pattern
             self.parser.parser = json.dumps(parser_data)
             self.parser.meta_data = meta_data
-            self.parser.chat_data = {"chat_history": self.chat_widget.history.to_dict()}
+            self.parser.chat_data = chat_data
             
             try:
                 updated_parser = db_client.update(self.parser)
@@ -645,6 +803,15 @@ class ParserDesignerWindow(QtWidgets.QDialog):
     
     def closeEvent(self, event):
         """Handle the window close event."""
+        # Log the chat content before closing
+        if hasattr(self, 'chat_widget') and self.chat_widget:
+            try:
+                content = self.chat_widget._get_chat_content()
+                if content:
+                    self.chat_widget._log_content("=== Chat Session Started ===\n" + content + "\n" + "-"*80 + "\n=== Chat Session Ended ===\n")
+            except Exception as e:
+                logger.error(f"Failed to log chat content: {str(e)}")
+        
         # Clean up the PlaywrightController if it exists
         if hasattr(self, 'playwright_controller') and self.playwright_controller:
             self.playwright_controller.close_browser()
@@ -665,6 +832,15 @@ class ParserDesignerWindow(QtWidgets.QDialog):
     
     def reject(self):
         """Handle the dialog rejection (close button)."""
+        # Log the chat content before closing
+        if hasattr(self, 'chat_widget') and self.chat_widget:
+            try:
+                content = self.chat_widget._get_chat_content()
+                if content:
+                    self.chat_widget._log_content("=== Chat Session Started ===\n" + content + "\n" + "-"*80 + "\n=== Chat Session Ended ===\n")
+            except Exception as e:
+                logger.error(f"Failed to log chat content: {str(e)}")
+        
         # Clean up resources
         if hasattr(self, 'playwright_controller') and self.playwright_controller:
             self.playwright_controller.close_browser()
